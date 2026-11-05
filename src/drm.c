@@ -27,6 +27,7 @@ static struct {
     struct drm_mode_modeinfo mode;
     struct buffer buffers[2];
     int front;
+    uint32_t frames;
 } drm = {.fd = -1};
 
 static int io(unsigned long request, void *arg)
@@ -130,6 +131,7 @@ static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
         if (io(DRM_IOCTL_MODE_PAGE_FLIP, &flip) == 0)
             wait_flip();
         drm.front = back;
+        drm.frames++;
     }
     lv_display_flush_ready(display);
 }
@@ -157,6 +159,23 @@ lv_display_t *drm_display_create(const char *path)
                                        drm.buffers[0].pitch, LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(display, flush);
     return display;
+}
+
+const uint8_t *drm_display_front(uint32_t *pitch)
+{
+    *pitch = drm.buffers[drm.front].pitch;
+    return drm.buffers[drm.front].map;
+}
+
+uint32_t drm_display_frames(void)
+{
+    return drm.frames;
+}
+
+void drm_display_size(uint32_t *width, uint32_t *height)
+{
+    *width = drm.mode.hdisplay;
+    *height = drm.mode.vdisplay;
 }
 
 bool drm_display_save(const char *path)

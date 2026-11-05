@@ -93,6 +93,8 @@ void picture_open(const char *src, const char *caption);
 bool shell_overlay_open(void);
 const cJSON *screen_config(void);
 lv_obj_t *shell_root(void);
+/* Shows the recording time in the status bar; a negative value hides it. */
+void shell_record_indicator(int seconds);
 lv_obj_t *shell_content(void);
 int shell_status_bar_height(void);
 
@@ -112,6 +114,14 @@ void power_menu_open(void);
 void power_menu_close(void);
 bool power_menu_is_open(void);
 bool power_menu_key(const struct key_event *key);
+
+/* record.c */
+void record_prompt(void);
+void record_prompt_close(void);
+bool record_prompt_open(void);
+bool record_prompt_key(const struct key_event *key);
+bool record_active(void);
+void record_stop(void);
 
 /* phone.c */
 void phone_init(void);

@@ -21,7 +21,7 @@ SOURCES = {
 
 DOCKERFILE = '''FROM alpine:3.22
 RUN apk add --no-cache build-base linux-headers cmake samurai pkgconf freetype-dev freetype-static libdrm-dev \\
-    zlib-static libpng-static bzip2-static brotli-static
+    zlib-static libpng-static bzip2-static brotli-static libjpeg-turbo-dev libjpeg-turbo-static
 '''
 
 

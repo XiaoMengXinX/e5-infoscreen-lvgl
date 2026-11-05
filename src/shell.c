@@ -37,7 +37,7 @@ static const int nav_defaults[5] = {PAGE_OVERVIEW, PAGE_SIGNAL, PAGE_TRAFFIC, PA
 
 static struct {
     lv_obj_t *root, *wallpaper, *content, *menu;
-    lv_obj_t *bar, *bar_sim, *bar_op, *bar_tech, *bar_notes, *bar_sms, *bar_bars, *bar_dual[2], *bar_bat, *bar_pct, *bar_clock;
+    lv_obj_t *bar, *bar_sim, *bar_op, *bar_tech, *bar_notes, *bar_sms, *bar_bars, *bar_dual[2], *bar_bat, *bar_pct, *bar_clock, *bar_rec;
     lv_obj_t *toolbar, *back_icon, *title, *spinner;
     lv_obj_t *nav, *nav_pill, *nav_buttons[5];
     lv_obj_t *pages[PAGE_COUNT], *errors[PAGE_COUNT];
@@ -52,11 +52,9 @@ static struct {
     bool dragging;
     int32_t from;
 } nav_drag;
-/* The direction of a page step, +1 or -1; 0 when a page is opened directly. */
-static int step_dir;
-/* The pill is parked past an edge while the page has no slot in the bar, and
- * stays on that side until a slot is chosen. */
-static bool pill_away;
+/* While the page has no slot in the bar the pill is parked past an edge: +1 right,
+ * -1 left, 0 when it sits under a slot. */
+static int pill_parked;
 static int loading[PAGE_COUNT];
 static bool load_failed[PAGE_COUNT];
 static lv_timer_t *poll_timer, *idle_timer, *clock_timer, *toast_timer, *osd_timer, *spinner_timer;
@@ -80,7 +78,9 @@ static bool volume_busy;
 static int volume_held;
 static bool volume_repeating;
 #define SCREENSHOT_PATH "/tmp/screen.png"
-static lv_timer_t *volume_timer;
+static lv_timer_t *volume_timer, *chord_timer;
+/* Both volume keys are down and the hold has not yet become a recording prompt. */
+static bool chord;
 
 static struct {
     char key[96];
@@ -262,6 +262,20 @@ static void screenshot(void)
                 : L("截图失败", "Screenshot failed"));
 }
 
+static void chord_hold(lv_timer_t *t)
+{
+    lv_timer_pause(t);
+    chord = false;
+    record_prompt();
+}
+
+void shell_record_indicator(int seconds)
+{
+    lv_obj_set_hidden(ui.bar_rec, seconds < 0);
+    if (seconds >= 0)
+        ui_set_fmt(ui.bar_rec, "● %d:%02d", seconds / 60, seconds % 60);
+}
+
 static void volume_step(int step)
 {
     if (volume_busy)
@@ -420,7 +434,7 @@ static void pill_to(int slot, bool animate)
     lv_obj_t *b = ui.nav_buttons[slot];
     lv_obj_set_size(ui.nav_pill, lv_obj_get_width(b), lv_obj_get_height(b));
     lv_obj_set_y(ui.nav_pill, lv_obj_get_y(b));
-    pill_away = false;
+    pill_parked = 0;
     pill_glide(lv_obj_get_x(b), animate, lv_anim_path_overshoot);
 }
 
@@ -438,6 +452,22 @@ static int nav_nearest(int32_t x)
     return best;
 }
 
+/* Pages without a slot come after the last slot and wrap round to the first, so
+ * the nearer half of them park the pill past the right edge and the rest past the
+ * left. Paging through them then always moves the pill the way the pages move. */
+static int park_side(int page)
+{
+    int order[PAGE_COUNT], n = page_order(order), slotted = 0;
+    for (int i = 0; i < n; i++)
+        for (int j = 0; j < 5; j++)
+            if (order[i] == nav_slots[j]) {
+                slotted++;
+                break;
+            }
+    int unslotted = n - slotted;
+    return page_position(page) - slotted < (unslotted + 1) / 2 ? 1 : -1;
+}
+
 static void nav_sync(void)
 {
     if (nav_drag.dragging)
@@ -450,10 +480,15 @@ static void nav_sync(void)
     lv_obj_update_layout(ui.nav);
     bool shown = !lv_obj_is_hidden(ui.nav_pill);
     if (active < 0) {
-        /* A page without a slot: the pill leaves the bar the way the pages go. */
-        if (shown && !pill_away)
-            pill_glide(pill_off(step_dir ? step_dir : 1), theme.motion, lv_anim_path_ease_in);
-        pill_away = true;
+        int side = park_side(app.page);
+        if (!pill_parked) {
+            if (shown)
+                pill_glide(pill_off(side), theme.motion, lv_anim_path_ease_in);
+        } else if (pill_parked != side) {
+            lv_anim_delete(ui.nav_pill, pill_x);
+            lv_obj_set_x(ui.nav_pill, pill_off(side));
+        }
+        pill_parked = side;
         return;
     }
     lv_obj_set_hidden(ui.nav_pill, false);
@@ -477,7 +512,7 @@ static void on_nav(lv_event_t *e)
             if (LV_ABS(x - nav_drag.from) < S(8))
                 return;
             nav_drag.dragging = true;
-            pill_away = false;
+            pill_parked = 0;
             lv_anim_delete(ui.nav_pill, pill_x);
             lv_obj_set_hidden(ui.nav_pill, false);
             lv_obj_t *b = ui.nav_buttons[0];
@@ -573,6 +608,9 @@ static void slide(lv_obj_t *obj, int32_t from, int32_t to)
     lv_anim_set_completed_cb(&a, slide_done);
     lv_anim_start(&a);
 }
+
+/* The direction of a page step, +1 or -1; 0 when a page is opened directly. */
+static int step_dir;
 
 void shell_show(enum page page)
 {
@@ -1101,11 +1139,19 @@ void shell_key(const struct key_event *key)
 {
     if (key->kind == KEY_KIND_VOLUP || key->kind == KEY_KIND_VOLDOWN) {
         int step = key->kind == KEY_KIND_VOLUP ? 1 : -1;
+        /* Both keys together: a press takes a screenshot, a hold offers screen
+         * recording, and during a recording either one stops it. */
         if (key->down && !key->repeat) {
             if (volume_held == -step) {
                 volume_held = 0;
                 lv_timer_pause(volume_timer);
-                screenshot();
+                if (record_active()) {
+                    record_stop();
+                } else {
+                    chord = true;
+                    lv_timer_reset(chord_timer);
+                    lv_timer_resume(chord_timer);
+                }
                 return;
             }
             volume_held = step;
@@ -1113,6 +1159,10 @@ void shell_key(const struct key_event *key)
             lv_timer_set_period(volume_timer, 120);
             lv_timer_reset(volume_timer);
             lv_timer_resume(volume_timer);
+        } else if (!key->down && chord) {
+            chord = false;
+            lv_timer_pause(chord_timer);
+            screenshot();
         } else if (!key->down && volume_held == step) {
             volume_held = 0;
             lv_timer_pause(volume_timer);
@@ -1166,6 +1216,8 @@ void shell_key(const struct key_event *key)
         power_menu_key(key);
         return;
     }
+    if (record_prompt_key(key))
+        return;
     if (phone_key(key) || lock_key(key))
         return;
     if (!lv_obj_is_hidden(ui.picture)) {
@@ -1374,6 +1426,8 @@ static void build_bar(void)
     lv_obj_set_style_max_width(ui.bar_op, 72, 0);
     lv_label_set_long_mode(ui.bar_op, LV_LABEL_LONG_MODE_DOTS);
     ui.bar_tech = ui_text(ui.bar, 9, true, theme.accent);
+    ui.bar_rec = ui_text(ui.bar, 10, true, theme.poor);
+    lv_obj_set_hidden(ui.bar_rec, !record_active());
     lv_obj_t *spacer = lv_obj_create(ui.bar);
     lv_obj_remove_style_all(spacer);
     lv_obj_set_flex_grow(spacer, 1);
@@ -1632,6 +1686,7 @@ void shell_rebuild(void)
 {
     keyboard_close();
     power_menu_close();
+    record_prompt_close();
     lv_obj_clean(lv_layer_sys());
     lv_obj_clean(lv_layer_top());
     lv_obj_delete(ui.root);
@@ -1660,6 +1715,8 @@ void shell_init(void)
     lv_timer_pause(spinner_timer);
     volume_timer = lv_timer_create(volume_repeat, 120, NULL);
     lv_timer_pause(volume_timer);
+    chord_timer = lv_timer_create(chord_hold, 800, NULL);
+    lv_timer_pause(chord_timer);
     power_key.timer = lv_timer_create(power_hold, 1200, NULL);
     lv_timer_pause(power_key.timer);
     build();
