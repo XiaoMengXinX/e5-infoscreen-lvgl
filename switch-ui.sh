@@ -6,7 +6,8 @@ dir=/usr/libexec/e5-infoscreen
 
 case "$1" in
 lvgl)
-    [ -x $dir/ui ] || { echo "missing $dir/ui" >&2; exit 1; }
+    [ -f $dir/ui ] || { echo "missing $dir/ui" >&2; exit 1; }
+    chmod 755 $dir/ui
     [ -e $dir/session.webkit ] || cp -p $dir/session $dir/session.webkit
     cat > $dir/session.new <<'SESSION'
 #!/bin/sh
