@@ -2,15 +2,18 @@
 """Build the LVGL screen program as a static aarch64 musl binary."""
 import hashlib
 import json
+import os
 import re
 import subprocess
 import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-TOP = HERE.parents[2]
-OUT = TOP / 'out/infoscreen-lvgl'
-COMMON_JS = TOP / 'openwrt/luci-app-t551m/htdocs/luci-static/resources/mu300/common.js'
+OUT = HERE / 'out'
+# The e5-linux checkout supplies the backend's error translations and the shared
+# info screen package; by default it sits next to this repository.
+E5_LINUX = Path(os.environ.get('E5_LINUX', HERE.parent / 'e5-linux')).resolve()
+COMMON_JS = E5_LINUX / 'openwrt/luci-app-t551m/htdocs/luci-static/resources/mu300/common.js'
 
 SOURCES = {
     'lvgl': ('https://github.com/lvgl/lvgl/archive/refs/tags/v9.6.0.tar.gz', 'lvgl-9.6.0.tar.gz',

@@ -7,8 +7,9 @@ HERE = Path(__file__).resolve().parent
 
 def stage(root):
     root = Path(root)
-    runpy.run_path(str(HERE.parent / 'infoscreen/stage.py'))['stage'](root)
-    binary = runpy.run_path(str(HERE / 'build.py'))['build']()
+    build = runpy.run_path(str(HERE / 'build.py'))
+    runpy.run_path(str(build['E5_LINUX'] / 'devices/common/infoscreen/stage.py'))['stage'](root)
+    binary = build['build']()
     for source, name in [(binary, 'usr/libexec/e5-infoscreen/ui'),
                          (HERE / 'session', 'usr/libexec/e5-infoscreen/session')]:
         dest = root / name

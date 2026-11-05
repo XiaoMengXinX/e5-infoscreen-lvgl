@@ -1,6 +1,6 @@
 # 信息屏 LVGL 界面
 
-`devices/common/infoscreen/` 屏幕界面的原生实现：基于 LVGL 9.6 的单个静态程序，
+[e5-linux](https://github.com/XiaoMengXinX/e5-linux) 中 `devices/common/infoscreen/` 屏幕界面的原生实现：基于 LVGL 9.6 的单个静态程序，
 通过 DRM（`/dev/dri/card0`，双缓冲、vblank 翻页）显示，从 evdev 读取触摸和按键，用 FreeType 渲染 Noto Sans CJK SC。
 
 数据和操作来自 `api.uc`（`127.0.0.1:8088/api`）及来电事件流（`127.0.0.1:8089/events`），
@@ -23,29 +23,34 @@
 | `src/theme.c` `src/ui.c` | 明暗配色、主题色、显示大小、密度和通用控件 |
 | `src/keyboard.c` | 屏幕键盘（APN 编辑） |
 
-后端错误信息的中文翻译在构建时从
+后端错误信息的中文翻译在构建时从 e5-linux 的
 `openwrt/luci-app-t551m/htdocs/luci-static/resources/mu300/common.js` 生成，与网页共用一份。
 
 ## 构建
 
+构建需要 e5-linux 的检出：默认在本仓库旁边（`../e5-linux`），也可以用环境变量 `E5_LINUX` 指定。
+
 ```sh
-python3 devices/common/infoscreen-lvgl/build.py
+python3 build.py
 ```
 
 在 `alpine:3.22`（linux/arm64）容器中静态链接 musl、FreeType 和 libpng，
-输出 `out/infoscreen-lvgl/e5-infoscreen-ui`。LVGL 与 cJSON 的源码包按 `build.py`
-中的 SHA-256 校验后缓存在 `out/infoscreen-lvgl/cache/`。
+输出 `out/e5-infoscreen-ui`。LVGL 与 cJSON 的源码包按 `build.py`
+中的 SHA-256 校验后缓存在 `out/cache/`。
 
 ## 安装
 
-`stage.py` 先执行 `devices/common/infoscreen/stage.py`，再安装：
+`stage.py` 先执行 e5-linux 的 `devices/common/infoscreen/stage.py`，再安装：
 
 - `usr/libexec/e5-infoscreen/ui`：本程序；
 - `usr/libexec/e5-infoscreen/session`：`e5-infoscreen` 服务的 `ui` 实例改为启动本程序。
 
 ```sh
-python3 devices/common/infoscreen-lvgl/stage.py <rootfs>
+python3 stage.py <rootfs>
 ```
+
+已在运行的设备上，把 `out/e5-infoscreen-ui` 上传为 `/usr/libexec/e5-infoscreen/ui` 后，
+用 `switch-ui.sh lvgl` 切换到本界面，`switch-ui.sh webkit` 切回网页界面。
 
 ## 截图
 
@@ -54,3 +59,7 @@ python3 devices/common/infoscreen-lvgl/stage.py <rootfs>
 ## 范围
 
 应用页提供内置电话及其设置（来电铃声、震动、亮屏）。第三方网页插件和应用商店尚未接入。
+
+## 许可
+
+[MIT](LICENSE)
