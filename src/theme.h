@@ -12,7 +12,7 @@ struct theme {
     bool desktop_wallpaper, lock_wallpaper;
     lv_opa_t surface_opa;
     lv_color_t bg, chrome, surface, button, active, danger, nav;
-    lv_color_t text, dim, line, accent, fair, poor, hero_start, hero_end;
+    lv_color_t text, dim, line, accent, good, fair, poor, hero_start, hero_end;
 };
 
 extern struct theme theme;

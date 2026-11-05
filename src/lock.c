@@ -321,9 +321,17 @@ void lock_create(void)
     /* The lock keeps its layout at the standard size so it always fits the panel. */
     float scale = theme.scale;
     theme.scale = scale < 1 ? scale : 1;
-    ui.root = lv_obj_create(lv_layer_top());
+    int32_t height = screen_height() - shell_status_bar_height();
+    /* The lock slides up inside this window, which keeps the status bar clear. */
+    lv_obj_t *window = lv_obj_create(lv_layer_top());
+    lv_obj_remove_style_all(window);
+    lv_obj_set_size(window, LV_PCT(100), height);
+    lv_obj_align(window, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_scrollable(window, false);
+    lv_obj_set_clickable(window, false);
+    ui.root = lv_obj_create(window);
     lv_obj_remove_style_all(ui.root);
-    lv_obj_set_size(ui.root, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_size(ui.root, LV_PCT(100), height);
     lv_obj_set_style_bg_opa(ui.root, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(ui.root, theme.hero_start, 0);
     lv_obj_set_style_bg_grad_color(ui.root, theme.bg, 0);
@@ -345,7 +353,7 @@ void lock_create(void)
         lv_obj_t *wallpaper = lv_image_create(ui.root);
         lv_image_set_src(wallpaper, path);
         lv_obj_set_floating(wallpaper, true);
-        lv_obj_set_size(wallpaper, lv_display_get_horizontal_resolution(lv_display_get_default()), screen_height());
+        lv_obj_set_size(wallpaper, lv_display_get_horizontal_resolution(lv_display_get_default()), height);
         lv_obj_align(wallpaper, LV_ALIGN_TOP_LEFT, -S(18), -S(28));
         lv_image_set_inner_align(wallpaper, LV_IMAGE_ALIGN_COVER);
     }

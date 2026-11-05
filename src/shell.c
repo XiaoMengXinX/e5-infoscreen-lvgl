@@ -98,6 +98,12 @@ lv_obj_t *shell_content(void)
     return ui.content;
 }
 
+/* The lock is drawn below the status bar, which stays readable while locked. */
+int shell_status_bar_height(void)
+{
+    return theme.status_bar ? STATUS_H : 0;
+}
+
 /* ---------- small drawn indicators ---------- */
 
 static void bars_draw(lv_event_t *e)
@@ -160,7 +166,7 @@ static void battery_draw(lv_event_t *e)
     lv_draw_rect(lv_event_get_layer(e), &dsc, &tip);
     int32_t inner = lv_area_get_width(&body) - 4;
     lv_area_t fill = {body.x1 + 2, body.y1 + 2, body.x1 + 2 + inner * (level & 0xff) / 100 - 1, body.y2 - 2};
-    dsc.bg_color = (level & 0x100) ? theme.accent : (level & 0x200) ? theme.poor : theme.text;
+    dsc.bg_color = (level & 0x100) ? theme.accent : (level & 0x200) ? theme.poor : theme.good;
     dsc.radius = 1;
     if (fill.x2 >= fill.x1)
         lv_draw_rect(lv_event_get_layer(e), &dsc, &fill);
@@ -736,21 +742,6 @@ static void notifications(const cJSON *list)
 
 /* ---------- polling ---------- */
 
-static void donate_items(int status, cJSON *r, void *ctx)
-{
-    const cJSON *item;
-    cJSON_ArrayForEach(item, jget(r, "items"))
-        if (jstr(item, "id") && !strcmp(jstr(item, "id"), "donate") && jstr(item, "src")) {
-            char caption[256];
-            label_text(jget(item, "caption"), caption, sizeof caption);
-            picture_open(jstr(item, "src"), caption,
-                         L("关闭后不再弹出，以后如有意愿，可以在“高级 → 关于 → 赞赏”里赞赏",
-                           "This is not shown again; it stays under Settings -> About -> Donate"),
-                         NULL);
-            api_post("/donate-seen", NULL, NULL, NULL);
-        }
-}
-
 static void reconcile_power(const cJSON *st)
 {
     const cJSON *awake = jget(st, "screen.awake");
@@ -822,8 +813,6 @@ static void status_done(int status, cJSON *st, void *ctx)
         if (app.brightness <= 0)
             app.brightness = 120;
         backlight_send(app.blank ? 0 : app.brightness);
-        if (jfalse(screen, "donate_seen"))
-            api_get("/settings/about", donate_items, NULL);
     }
     if (first)
         clock_tick(NULL);
@@ -1350,15 +1339,14 @@ static void build_menu(void)
     lv_obj_set_flex_grow(title, 1);
     tool_button(head, "close", 40, on_menu);
     lv_obj_t *grid = ui_box(ui.menu, LV_FLEX_FLOW_ROW_WRAP, 8);
-    int order[PAGE_COUNT];
-    page_order(order);
     int32_t cell = (lv_display_get_horizontal_resolution(lv_display_get_default()) - 28 - 16) / 3;
-    for (int i = 0; i < PAGE_COUNT; i++) {
-        lv_obj_t *b = page_button(grid, order[i], cell);
+    /* In page order, the same order the number keys select. */
+    for (int page = 0; page < PAGE_COUNT; page++) {
+        lv_obj_t *b = page_button(grid, page, cell);
         lv_obj_set_height(b, S(70));
         lv_obj_set_style_bg_opa(b, theme.surface_opa, 0);
         lv_obj_set_style_bg_color(b, theme.surface, 0);
-        lv_obj_set_style_text_color(b, order[i] == (int)app.page ? theme.accent : theme.text, 0);
+        lv_obj_set_style_text_color(b, page == (int)app.page ? theme.accent : theme.text, 0);
     }
     lv_obj_set_hidden(ui.menu, true);
 }
@@ -1372,7 +1360,9 @@ static void build_overlays(void)
     lv_obj_set_style_radius(ui.toast, 18, 0);
     lv_obj_set_style_pad_ver(ui.toast, 8, 0);
     lv_obj_set_style_pad_hor(ui.toast, 14, 0);
-    lv_obj_set_style_max_width(ui.toast, LV_PCT(90), 0);
+    /* A pixel cap for the same reason as a row's value: a wrapping label measures
+     * itself against the raw value, so a percentage would not wrap. */
+    lv_obj_set_style_max_width(ui.toast, S(288), 0);
     lv_label_set_long_mode(ui.toast, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_set_style_text_align(ui.toast, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(ui.toast, LV_ALIGN_BOTTOM_MID, 0, -((theme.nav_bar ? NAV_H : 0) + 8));

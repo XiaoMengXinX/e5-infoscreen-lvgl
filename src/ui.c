@@ -160,7 +160,9 @@ lv_obj_t *ui_row(lv_obj_t *parent, const char *icon, const char *label, const ch
     lv_label_set_text(name, label);
     if (value && *value) {
         lv_obj_t *text = ui_text(row, 12, false, (flags & ROW_ON) ? theme.accent : theme.dim);
-        lv_obj_set_style_max_width(text, LV_PCT(55), 0);
+        /* A pixel cap, not a percentage: a wrapping label measures itself against
+         * the raw value, so LV_PCT here would let the text run on one line. */
+        lv_obj_set_style_max_width(text, S(150), 0);
         lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_RIGHT, 0);
         lv_label_set_long_mode(text, LV_LABEL_LONG_MODE_WRAP);
         lv_label_set_text(text, value);

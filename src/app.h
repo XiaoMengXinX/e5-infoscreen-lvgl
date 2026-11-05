@@ -94,6 +94,7 @@ bool shell_overlay_open(void);
 const cJSON *screen_config(void);
 lv_obj_t *shell_root(void);
 lv_obj_t *shell_content(void);
+int shell_status_bar_height(void);
 
 /* lock.c */
 void lock_create(void);

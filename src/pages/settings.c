@@ -72,8 +72,7 @@ static const struct {
     {"reset_status", "info"}, {"reset", "refresh"}, {"usb_role_state", "usb"}, {"usb_role", "usb"},
     {"usb_host_boot", "power"}, {"usb_net_current", "globe"}, {"usb_net_mode", "globe"},
     {"usb_net_scope", "clock"}, {"usb_net_auto", "check"}, {"usb_lan_auto", "device"}, {"name", "info"},
-    {"maintainer", "user"}, {"copyright", "shield"}, {"license", "shield"}, {"donate", "heart"},
-    {"disclaimer", "info"}, {"control_slot", "simcard"},
+    {"maintainer", "user"}, {"copyright", "shield"}, {"license", "shield"}, {"control_slot", "simcard"},
 };
 
 static const char *const page_icons[] = {"home", "signal", "traffic", "sms", "wifi", "device", "info", "settings", "apps"};
@@ -562,12 +561,19 @@ static void render_cat(struct view *v)
     cJSON_ArrayForEach(it, v->data) {
         const char *type = jstr(it, "type") ? jstr(it, "type") : "";
         const char *id = jstr(it, "id") ? jstr(it, "id") : "";
-        if (!strcmp(id, "ui_opacity") || !strcmp(id, "ui_density"))
+        /* Not offered here: the opacity and density preferences, the tip row and
+         * the disclaimer. */
+        if (!strcmp(id, "ui_opacity") || !strcmp(id, "ui_density") || !strcmp(id, "donate") ||
+            !strcmp(id, "disclaimer"))
             continue;
         char key[96], label[256], value[512];
         snprintf(key, sizeof key, "item:%s", id);
         label_text(jget(it, "label"), label, sizeof label);
-        value_text(it, value, sizeof value);
+        /* The backend names the shared package; this UI is its LVGL rewrite. */
+        if (!strcmp(id, "name"))
+            snprintf(value, sizeof value, "%s", "e5-infoscreen-lvgl");
+        else
+            value_text(it, value, sizeof value);
         const char *icon = icon_for(id, icon_for(v->cat, NULL));
         if (!strncmp(id, "nav_slot", 8)) {
             int page = atoi(jstr(it, "value") ? jstr(it, "value") : "0");

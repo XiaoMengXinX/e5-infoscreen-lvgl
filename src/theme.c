@@ -42,6 +42,7 @@ bool theme_apply(const cJSON *screen)
         t.dim = lv_color_hex(0x50647a);
         t.line = lv_color_hex(0xc6d2df);
         t.accent = lv_color_hex(accents[a]);
+        t.good = lv_color_hex(0x1f8a52);
         t.fair = lv_color_hex(0x855900);
         t.poor = lv_color_hex(0xad292f);
         t.hero_start = lv_color_hex(0xdff8ef);
@@ -59,6 +60,7 @@ bool theme_apply(const cJSON *screen)
         t.dim = lv_color_hex(0x96a5b9);
         t.line = lv_color_hex(0x283444);
         t.accent = lv_color_hex(accents[a]);
+        t.good = lv_color_hex(0x3ccf7a);
         t.fair = lv_color_hex(0xf2c14b);
         t.poor = lv_color_hex(0xf0625a);
         t.hero_start = lv_color_hex(0x213b42);
