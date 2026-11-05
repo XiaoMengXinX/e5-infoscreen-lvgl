@@ -525,6 +525,11 @@ void speedtest_create(lv_obj_t *parent)
     lv_obj_center(go);
     lv_obj_add_event_cb(ui.go, on_go, LV_EVENT_CLICKED, NULL);
     ui_focusable(ui.go);
+    /* The ring is already the accent; the key focus fills it instead. */
+    lv_obj_set_style_outline_width(ui.go, 0, LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_bg_color(ui.go, theme.accent, LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_bg_opa(ui.go, LV_OPA_30, LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_border_color(ui.go, theme.text, LV_STATE_FOCUS_KEY);
 
 
     lv_obj_t *where = ui_box(ui.root, LV_FLEX_FLOW_ROW, 10);
