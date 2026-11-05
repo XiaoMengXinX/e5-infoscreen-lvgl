@@ -1,5 +1,6 @@
 #include "ui.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
@@ -224,4 +225,11 @@ void ui_set_fmt(lv_obj_t *label, const char *fmt, ...)
     vsnprintf(text, sizeof text, fmt, args);
     va_end(args);
     ui_set_text(label, text);
+}
+
+int32_t ui_ease_out(const lv_anim_t *a)
+{
+    float t = a->duration > 0 ? (float)a->act_time / (float)a->duration : 1;
+    float rest = 1 - (t < 0 ? 0 : t > 1 ? 1 : t);
+    return a->start_value + (int32_t)lroundf((float)(a->end_value - a->start_value) * (1 - rest * rest * rest));
 }

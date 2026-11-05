@@ -32,7 +32,7 @@ static cJSON *usage;
 
 static struct {
     bool active;
-    int32_t x, y, last_x, last_y, peak_y;
+    int32_t x, y, last_x, last_y, peak_y, base;
     uint32_t time;
     struct {
         int32_t y;
@@ -125,12 +125,31 @@ void lock_refresh_usage(void)
         fetch_usage();
 }
 
+static void anim_y(void *obj, int32_t v)
+{
+    lv_obj_set_style_translate_y(obj, v, 0);
+}
+
+/* A drag that does not unlock springs back rather than snapping. */
 static void reset_gesture(void)
 {
     gesture.active = false;
-    if (!animating && ui.root) {
+    if (animating || !ui.root)
+        return;
+    int32_t current = lv_obj_get_style_translate_y(ui.root, 0);
+    lv_anim_delete(ui.root, anim_y);
+    if (!current || !theme.motion) {
         lv_obj_set_style_translate_y(ui.root, 0, 0);
+        return;
     }
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ui.root);
+    lv_anim_set_exec_cb(&a, anim_y);
+    lv_anim_set_values(&a, current, 0);
+    lv_anim_set_duration(&a, 280);
+    lv_anim_set_path_cb(&a, ui_ease_out);
+    lv_anim_start(&a);
 }
 
 static void finish_unlock(void)
@@ -147,11 +166,6 @@ static void finish_unlock(void)
     shell_show(app.page);
 }
 
-static void anim_y(void *obj, int32_t v)
-{
-    lv_obj_set_style_translate_y(obj, v, 0);
-}
-
 static void unlock_done(lv_anim_t *a)
 {
     if (animating)
@@ -165,7 +179,8 @@ static void unlock(float velocity)
     int32_t h = screen_height();
     int32_t current = lv_obj_get_style_translate_y(ui.root, 0);
     float remaining = (float)(h + current);
-    uint32_t ms = theme.motion ? (uint32_t)fminf(320, fmaxf(140, remaining / fmaxf(1.5f, velocity))) : 0;
+    /* The ease-out starts at 3 × remaining / duration: begin at the finger's speed. */
+    uint32_t ms = theme.motion ? (uint32_t)fminf(360, fmaxf(160, 3 * remaining / fmaxf(0.8f, velocity))) : 0;
     if (!ms) {
         finish_unlock();
         return;
@@ -175,7 +190,7 @@ static void unlock(float velocity)
     lv_anim_init(&a);
     lv_anim_set_var(&a, ui.root);
     lv_anim_set_duration(&a, ms);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_path_cb(&a, ui_ease_out);
     lv_anim_set_exec_cb(&a, anim_y);
     lv_anim_set_values(&a, current, -h * 105 / 100);
     lv_anim_set_completed_cb(&a, unlock_done);
@@ -188,6 +203,9 @@ static void gesture_start(lv_point_t p)
         reset_gesture();
         return;
     }
+    /* Catching the lock while it springs back carries on from where it is. */
+    lv_anim_delete(ui.root, anim_y);
+    gesture.base = lv_obj_get_style_translate_y(ui.root, 0);
     gesture.active = true;
     gesture.x = gesture.last_x = p.x;
     gesture.y = gesture.last_y = gesture.peak_y = p.y;
@@ -222,7 +240,7 @@ static void gesture_move(lv_point_t p)
         memmove(gesture.samples, gesture.samples + 1, sizeof gesture.samples[0] * (size_t)(gesture.count - 1));
         gesture.count--;
     }
-    lv_obj_set_style_translate_y(ui.root, -distance, 0);
+    lv_obj_set_style_translate_y(ui.root, gesture.base - distance, 0);
     idle_reset();
 }
 
@@ -232,7 +250,7 @@ static void gesture_end(lv_point_t p)
         return;
     int32_t h = screen_height();
     uint32_t now = lv_tick_get();
-    int32_t dy = gesture.y - p.y, dx = abs(gesture.x - p.x);
+    int32_t dy = gesture.y - p.y - gesture.base, dx = abs(gesture.x - p.x);
     uint32_t elapsed = now - gesture.time;
     const char *distance = jstr(screen_config(), "unlock_distance");
     bool longer = distance && !strcmp(distance, "long");

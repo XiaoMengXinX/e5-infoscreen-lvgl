@@ -568,8 +568,8 @@ static void slide(lv_obj_t *obj, int32_t from, int32_t to)
     lv_anim_set_var(&a, obj);
     lv_anim_set_exec_cb(&a, slide_x);
     lv_anim_set_values(&a, from, to);
-    lv_anim_set_duration(&a, 240);
-    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_set_duration(&a, 280);
+    lv_anim_set_path_cb(&a, ui_ease_out);
     lv_anim_set_completed_cb(&a, slide_done);
     lv_anim_start(&a);
 }

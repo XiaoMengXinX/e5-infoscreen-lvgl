@@ -187,7 +187,7 @@ void power_menu_open(void)
         lv_anim_set_exec_cb(&a, appear);
         lv_anim_set_values(&a, 0, 100);
         lv_anim_set_duration(&a, 200);
-        lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+        lv_anim_set_path_cb(&a, ui_ease_out);
         lv_anim_start(&a);
     }
     idle_reset();
