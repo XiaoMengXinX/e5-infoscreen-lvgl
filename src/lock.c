@@ -337,8 +337,7 @@ static void apply_config(void)
 void lock_create(void)
 {
     /* The lock keeps its layout at the standard size so it always fits the panel. */
-    float scale = theme.scale;
-    theme.scale = scale < 1 ? scale : 1;
+    float scale = theme_cap(1);
     int32_t height = screen_height() - shell_status_bar_height();
     /* The lock slides up inside this window, which keeps the status bar clear. */
     lv_obj_t *window = lv_obj_create(lv_layer_top());

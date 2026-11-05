@@ -14,6 +14,8 @@
 #include "util.h"
 
 #define TONES 32
+/* LVGL's long-press time, which the on-screen delete key uses. */
+#define LONG_PRESS_MS LV_INDEV_DEF_LONG_PRESS_TIME
 
 static struct {
     lv_obj_t *root, *body;
@@ -43,8 +45,10 @@ static struct {
 static int tone_count;
 static bool sending_tone, keypad_open, power_captured, zero_held;
 static lv_timer_t *clock_timer, *zero_timer;
+static uint32_t back_down;
 
 static void render(void);
+static void draw(void);
 static void build(void);
 static void mount(bool fullscreen);
 
@@ -686,10 +690,10 @@ static void build_dialer(void)
     lv_obj_set_flex_align(area, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     ui.placeholder = ui_text(area, 13, false, theme.dim);
     lv_label_set_text(ui.placeholder, L("输入电话号码", "Enter a number"));
-    ui.number = ui_text(area, 30, false, theme.text);
+    ui.number = ui_text(area, 28, false, theme.text);
     lv_obj_set_width(ui.number, LV_PCT(100));
     lv_obj_set_style_text_align(ui.number, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_letter_space(ui.number, 2, 0);
+    lv_obj_set_style_text_letter_space(ui.number, 1, 0);
     lv_label_set_long_mode(ui.number, LV_LABEL_LONG_MODE_CLIP);
     keypad(ui.body, on_key, true);
     lv_obj_t *actions = ui_box(ui.body, LV_FLEX_FLOW_ROW, 0);
@@ -748,7 +752,16 @@ static void build_call(void)
     ui.accept = circle(actions, 64, "phone", lv_color_hex(0x30b86e), lv_color_white(), on_accept);
 }
 
+/* The dialer and the call screen are laid out for the panel: past the standard
+ * size the keypad would no longer fit, so they never scale up. */
 static void render(void)
+{
+    float scale = theme_cap(1);
+    draw();
+    theme.scale = scale;
+}
+
+static void draw(void)
 {
     if (!opened)
         return;
@@ -778,7 +791,7 @@ static void render(void)
         lv_obj_set_hidden(ui.number, *number == 0);
         ui_set_text(ui.number, number);
         size_t len = strlen(number);
-        lv_obj_set_style_text_font(ui.number, F(len > 16 ? 20 : len > 12 ? 24 : 30), 0);
+        lv_obj_set_style_text_font(ui.number, F(len > 16 ? 20 : len > 12 ? 24 : 28), 0);
         for (int i = 0; i < 2; i++) {
             bool on = i == card;
             lv_obj_set_style_bg_opa(ui.sims[i], on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
@@ -890,6 +903,7 @@ void phone_init(void)
 /* The dialer sits in the shell's content area; a call takes the whole display. */
 static void mount(bool fullscreen)
 {
+    float scale = theme_cap(1);
     close_sheet();
     if (ui.root)
         lv_obj_delete(ui.root);
@@ -910,6 +924,7 @@ static void mount(bool fullscreen)
     lv_obj_set_height(ui.body, LV_PCT(100));
     lv_obj_set_flex_align(ui.body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     build();
+    theme.scale = scale;
 }
 
 void phone_open(void)
@@ -959,15 +974,23 @@ bool phone_key(const struct key_event *key)
     if (!opened || !key->down)
         return false;
     idle_reset();
+    /* Holding Back clears the number, as holding the delete key does. */
+    if (key->kind == KEY_KIND_BACK && !key->repeat)
+        back_down = lv_tick_get();
+    if (key->kind == KEY_KIND_BACK && key->repeat && !c && *number && !ui.sheet && !keypad_open &&
+        lv_tick_elaps(back_down) >= LONG_PRESS_MS) {
+        set_number("");
+        return true;
+    }
     if (key->repeat && key->kind != KEY_KIND_CHAR && key->kind != KEY_KIND_UP && key->kind != KEY_KIND_DOWN)
         return true;
     if (ui.sheet) {
         if (key->kind == KEY_KIND_BACK)
             on_sheet_close(NULL);
         else if (key->kind == KEY_KIND_UP || key->kind == KEY_KIND_LEFT)
-            lv_group_focus_prev(group);
+            input_focus_move(group, -1);
         else if (key->kind == KEY_KIND_DOWN || key->kind == KEY_KIND_RIGHT)
-            lv_group_focus_next(group);
+            input_focus_move(group, 1);
         else if (key->kind == KEY_KIND_OK)
             input_focus_key(LV_KEY_ENTER);
         return true;
@@ -1001,15 +1024,15 @@ bool phone_key(const struct key_event *key)
         if (lv_group_get_focused(group))
             input_focus_key(LV_KEY_ENTER);
         else
-            lv_group_focus_next(group);
+            input_focus_move(group, 1);
         return true;
     case KEY_KIND_UP:
     case KEY_KIND_LEFT:
-        lv_group_focus_prev(group);
+        input_focus_move(group, -1);
         return true;
     case KEY_KIND_DOWN:
     case KEY_KIND_RIGHT:
-        lv_group_focus_next(group);
+        input_focus_move(group, 1);
         return true;
     case KEY_KIND_MENU:
         if (c)

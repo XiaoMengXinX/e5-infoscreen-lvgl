@@ -98,7 +98,7 @@ static void paint(void)
     lv_group_remove_all_objs(group);
     lv_group_t *outer = lv_group_get_default();
     lv_group_set_default(group);
-    lv_obj_t *title = ui_text(sheet, 21, true, theme.text);
+    lv_obj_t *title = ui_text(sheet, 21, true, theme.text), *first = NULL;
     lv_obj_set_style_pad_bottom(title, S(8), 0);
     if (selected < 0) {
         lv_label_set_text(title, L("电源菜单", "Power menu"));
@@ -107,6 +107,8 @@ static void paint(void)
                                    (void *)(intptr_t)i);
             if (!strcmp(actions[i].id, "poweroff"))
                 lv_obj_set_style_text_color(lv_obj_get_child(row, 0), theme.poor, 0);
+            if (!first)
+                first = row;
         }
     } else {
         lv_label_set_text(title, L(actions[selected].zh, actions[selected].en));
@@ -136,7 +138,8 @@ static void paint(void)
     lv_obj_set_width(cancel, LV_PCT(100));
     lv_obj_set_style_bg_opa(cancel, LV_OPA_TRANSP, 0);
     lv_obj_set_style_text_color(lv_obj_get_child(cancel, 0), theme.dim, 0);
-    lv_group_focus_obj(cancel);
+    /* The keys start from the first action; a confirmation starts from Cancel. */
+    lv_group_focus_obj(first ? first : cancel);
     lv_group_set_default(outer);
 }
 
@@ -212,11 +215,11 @@ bool power_menu_key(const struct key_event *key)
         break;
     case KEY_KIND_UP:
     case KEY_KIND_LEFT:
-        lv_group_focus_prev(group);
+        input_focus_move(group, -1);
         break;
     case KEY_KIND_DOWN:
     case KEY_KIND_RIGHT:
-        lv_group_focus_next(group);
+        input_focus_move(group, 1);
         break;
     default:
         break;

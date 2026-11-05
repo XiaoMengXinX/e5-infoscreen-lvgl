@@ -33,14 +33,19 @@ lv_obj_t *ui_page(lv_obj_t *parent)
     lv_obj_remove_style_all(page);
     lv_obj_set_size(page, LV_PCT(100), LV_PCT(100));
     lv_obj_set_flex_flow(page, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_top(page, S(8), 0);
+    lv_obj_set_style_pad_top(page, S(theme.compact ? 5 : 8), 0);
     lv_obj_set_style_pad_hor(page, S(12), 0);
     lv_obj_set_style_pad_bottom(page, S(14), 0);
-    lv_obj_set_style_pad_gap(page, S(10), 0);
+    lv_obj_set_style_pad_gap(page, S(theme.compact ? 6 : 10), 0);
     lv_obj_set_scroll_dir(page, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_momentum(page, true);
     return page;
+}
+
+int ui_stack_gap(void)
+{
+    return theme.compact ? 8 : 10;
 }
 
 lv_obj_t *ui_card(lv_obj_t *parent)
@@ -48,8 +53,9 @@ lv_obj_t *ui_card(lv_obj_t *parent)
     lv_obj_t *card = ui_box(parent, LV_FLEX_FLOW_COLUMN, 6);
     lv_obj_set_style_bg_color(card, theme.surface, 0);
     lv_obj_set_style_bg_opa(card, theme.surface_opa, 0);
-    lv_obj_set_style_radius(card, S(15), 0);
-    lv_obj_set_style_pad_all(card, S(12), 0);
+    lv_obj_set_style_radius(card, S(theme.compact ? 12 : 15), 0);
+    lv_obj_set_style_pad_ver(card, S(theme.compact ? 9 : 12), 0);
+    lv_obj_set_style_pad_hor(card, S(theme.compact ? 11 : 12), 0);
     return card;
 }
 
@@ -142,6 +148,14 @@ lv_obj_t *ui_heading(lv_obj_t *parent, const char *text)
     return heading;
 }
 
+/* The name keeps at most 48 % of the row, as the web page's does, so a long value
+ * wraps beside it instead of squeezing it away. */
+static void cap_name(lv_event_t *e)
+{
+    lv_obj_t *row = lv_event_get_target_obj(e);
+    lv_obj_set_style_max_width(lv_event_get_user_data(e), lv_obj_get_content_width(row) * 48 / 100, 0);
+}
+
 lv_obj_t *ui_row(lv_obj_t *parent, const char *icon, const char *label, const char *value, unsigned flags,
                  lv_event_cb_t cb, void *ctx)
 {
@@ -149,21 +163,24 @@ lv_obj_t *ui_row(lv_obj_t *parent, const char *icon, const char *label, const ch
     lv_obj_set_style_bg_color(row, (flags & ROW_DANGER) ? theme.danger : theme.surface, 0);
     lv_obj_set_style_bg_opa(row, theme.surface_opa, 0);
     lv_obj_set_style_radius(row, S(12), 0);
-    lv_obj_set_style_pad_hor(row, S(12), 0);
-    lv_obj_set_style_pad_ver(row, S(13), 0);
+    lv_obj_set_style_pad_hor(row, S(theme.compact ? 11 : 12), 0);
+    lv_obj_set_style_pad_ver(row, S(theme.compact ? 9 : 12), 0);
+    lv_obj_set_style_min_height(row, S(theme.compact ? 42 : 46), 0);
     if (icon) {
         lv_obj_t *glyph = icon_create(row, icon, S(20));
         lv_obj_set_style_text_color(glyph, theme.accent, 0);
     }
     lv_obj_t *name = ui_text(row, 13, false, theme.text);
-    lv_obj_set_flex_grow(name, 1);
     lv_label_set_long_mode(name, LV_LABEL_LONG_MODE_WRAP);
     lv_label_set_text(name, label);
-    if (value && *value) {
-        lv_obj_t *text = ui_text(row, 12, false, (flags & ROW_ON) ? theme.accent : theme.dim);
+    if (!value || !*value) {
+        lv_obj_set_flex_grow(name, 1);
+    } else {
         /* A pixel cap, not a percentage: a wrapping label measures itself against
-         * the raw value, so LV_PCT here would let the text run on one line. */
-        lv_obj_set_style_max_width(text, S(150), 0);
+         * the raw value, so LV_PCT would let the name run on one line. */
+        lv_obj_add_event_cb(row, cap_name, LV_EVENT_SIZE_CHANGED, name);
+        lv_obj_t *text = ui_text(row, 12, false, (flags & ROW_ON) ? theme.accent : theme.dim);
+        lv_obj_set_flex_grow(text, 1);
         lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_RIGHT, 0);
         lv_label_set_long_mode(text, LV_LABEL_LONG_MODE_WRAP);
         lv_label_set_text(text, value);

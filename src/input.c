@@ -96,6 +96,21 @@ void input_defocus(void)
     lv_obj_send_event(obj, LV_EVENT_DEFOCUSED, keypad_indev);
 }
 
+void input_focus_move(lv_group_t *group, int dir)
+{
+    lv_obj_t *focused = lv_group_get_focused(group);
+    if (!focused || lv_obj_has_state(focused, LV_STATE_FOCUS_KEY)) {
+        if (dir > 0)
+            lv_group_focus_next(group);
+        else
+            lv_group_focus_prev(group);
+        focused = lv_group_get_focused(group);
+    }
+    /* LVGL resolves the group's indev to the touch device and never marks it. */
+    if (focused)
+        lv_obj_add_state(focused, LV_STATE_FOCUS_KEY);
+}
+
 void input_set_group(lv_group_t *group)
 {
     lv_indev_set_group(keypad_indev, group);

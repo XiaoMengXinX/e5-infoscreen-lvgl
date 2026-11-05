@@ -237,6 +237,16 @@ static void create(lv_obj_t *page)
         /* Touch-only until Enter hands the arrow keys to the selector. */
         lv_group_remove_obj(ui.choices[i]);
     }
+    /* A label too wide for a third of the row (large sizes, English) gets a line
+     * of its own above the SIM choices. */
+    lv_obj_update_layout(choices);
+    lv_obj_t *first = lv_obj_get_child(ui.choices[0], 0);
+    if (lv_obj_get_width(first) > lv_obj_get_content_width(ui.choices[0])) {
+        lv_obj_set_flex_flow(choices, LV_FLEX_FLOW_ROW_WRAP);
+        lv_obj_set_style_pad_row(choices, S(6), 0);
+        lv_obj_set_flex_grow(ui.choices[0], 0);
+        lv_obj_set_width(ui.choices[0], LV_PCT(100));
+    }
     ui.row = choices;
     lv_obj_set_style_radius(choices, S(11), 0);
     lv_obj_set_style_outline_color(choices, theme.accent, 0);

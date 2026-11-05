@@ -15,5 +15,8 @@ int input_touch_count(void);
 lv_indev_t *input_touch(void);
 void input_focus_key(uint32_t key);
 void input_defocus(void);
+/* Moves a group's focus for the arrow keys and shows it; the first press only
+ * reveals the focus already there. */
+void input_focus_move(lv_group_t *group, int dir);
 void input_set_group(lv_group_t *group);
 lv_group_t *input_group(void);

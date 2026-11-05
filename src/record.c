@@ -407,8 +407,8 @@ void record_prompt(void)
     lv_group_t *outer = lv_group_get_default();
     lv_group_set_default(group);
     lv_label_set_text(ui_text(sheet, 21, true, theme.text), L("屏幕录制", "Screen recording"));
-    lv_obj_t *note = ui_note(sheet, L("最长录制 1 分钟，同时按音量加和音量减结束。\n保存到 " RECORD_PATH,
-                                      "Up to one minute; press both volume keys to stop.\nSaved to " RECORD_PATH));
+    lv_obj_t *note = ui_note(sheet, L("最长录制 1 分钟，同时按音量加和音量减结束\n保存到 " RECORD_PATH,
+                                      "Up to one minute; press both volume keys to stop\nSaved to " RECORD_PATH));
     lv_obj_set_style_text_font(note, F(13), 0);
     lv_obj_t *go = ui_button(sheet, L("开始录制", "Start recording"), on_start, NULL);
     lv_obj_set_width(go, LV_PCT(100));
@@ -437,11 +437,11 @@ bool record_prompt_key(const struct key_event *key)
         break;
     case KEY_KIND_UP:
     case KEY_KIND_LEFT:
-        lv_group_focus_prev(group);
+        input_focus_move(group, -1);
         break;
     case KEY_KIND_DOWN:
     case KEY_KIND_RIGHT:
-        lv_group_focus_next(group);
+        input_focus_move(group, 1);
         break;
     default:
         break;

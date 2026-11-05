@@ -35,6 +35,9 @@ void ui_button_text(lv_obj_t *button, const char *text);
 void ui_meter_set(struct ui_meter *meter, const char *text, int percent, lv_color_t color);
 void ui_focusable(lv_obj_t *obj);
 
+/* The gap between the blocks of a list or a nested view, tighter when compact. */
+int ui_stack_gap(void);
+
 /* Cubic ease-out: it starts at three times the average speed, so an animation that
  * takes over from a finger can be timed to match the finger's speed. */
 int32_t ui_ease_out(const lv_anim_t *a);

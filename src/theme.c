@@ -19,6 +19,8 @@ bool theme_apply(const cJSON *screen)
     const char *mode = jstr(screen, "ui_theme");
     t.light = mode && !strcmp(mode, "light");
     t.motion = !jfalse(screen, "ui_motion");
+    const char *density = jstr(screen, "ui_density");
+    t.compact = density && !strcmp(density, "compact");
     t.status_bar = !jfalse(screen, "status_bar");
     t.nav_bar = !jfalse(screen, "nav_bar");
     const char *desktop = jstr(screen, "desktop_wallpaper"), *lock = jstr(screen, "lock_wallpaper");
@@ -78,6 +80,14 @@ bool theme_apply(const cJSON *screen)
     }
     memcpy(&theme, &t, sizeof t);
     return changed;
+}
+
+float theme_cap(float max)
+{
+    float scale = theme.scale;
+    if (theme.scale > max)
+        theme.scale = max;
+    return scale;
 }
 
 int S(int px)

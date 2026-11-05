@@ -7,7 +7,7 @@
 
 struct theme {
     float scale;
-    bool light, motion;
+    bool light, motion, compact;
     bool status_bar, nav_bar;
     bool desktop_wallpaper, lock_wallpaper;
     lv_opa_t surface_opa;
@@ -19,6 +19,10 @@ extern struct theme theme;
 
 /* Returns true when the configuration changes how the shell is built. */
 bool theme_apply(const cJSON *screen);
+
+/* Lowers the scale to at most max for a layout tied to the panel's size;
+ * returns the scale to restore. */
+float theme_cap(float max);
 
 int S(int px);
 const lv_font_t *F(int px);

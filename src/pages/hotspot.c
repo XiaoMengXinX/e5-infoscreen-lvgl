@@ -73,15 +73,16 @@ static void qr_loaded(int status, const char *body, void *ctx)
 
 static void key_loaded(int status, cJSON *r, void *ctx)
 {
-    if (show_key)
-        ui_set_text(ui.key, jstr(r, "key") ? jstr(r, "key") : "");
+    const char *key = show_key ? jstr(r, "key") : NULL;
+    ui_set_text(ui.key, key ? key : "");
+    lv_obj_set_hidden(ui.key, !key || !*key);
 }
 
 static void on_show_key(lv_event_t *e)
 {
     show_key = !show_key;
     ui_button_text(ui.show_key, show_key ? L("隐藏密码", "Hide key") : L("显示密码", "Show key"));
-    ui_set_text(ui.key, "");
+    lv_obj_set_hidden(ui.key, true);
     if (show_key)
         api_get("/wifi-key", key_loaded, NULL);
 }
@@ -189,6 +190,9 @@ static void create(lv_obj_t *page)
     lv_label_set_long_mode(ui.ssid, LV_LABEL_LONG_MODE_DOTS);
     ui.toggle = ui_button(head, "", on_toggle, NULL);
     lv_obj_set_style_min_width(ui.toggle, S(64), 0);
+    /* When on, the switch is filled with the accent; ring it in the text colour. */
+    lv_obj_set_style_outline_color(ui.toggle, theme.text, LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_outline_pad(ui.toggle, 2, LV_STATE_FOCUS_KEY);
 
     lv_obj_t *qr = ui_card(page);
     lv_obj_set_flex_align(qr, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -210,7 +214,9 @@ static void create(lv_obj_t *page)
     lv_obj_set_style_text_align(ui.qr_off, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(ui.qr_off, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_center(ui.qr_off);
+    /* Takes no room until the key is shown. */
     ui.key = ui_text(qr, 13, false, theme.text);
+    lv_obj_set_hidden(ui.key, true);
     ui.show_key = ui_button(qr, show_key ? L("隐藏密码", "Hide key") : L("显示密码", "Show key"), on_show_key, NULL);
 
     lv_obj_t *list = ui_card(page);

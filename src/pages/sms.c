@@ -78,21 +78,23 @@ static void render_list(void)
         lv_obj_set_style_bg_opa(row, theme.surface_opa, 0);
         lv_obj_set_style_bg_color(row, lv_color_mix(lv_color_white(), theme.surface, 30), LV_STATE_PRESSED);
         lv_obj_set_style_radius(row, S(12), 0);
-        lv_obj_set_style_pad_all(row, S(12), 0);
+        lv_obj_set_style_pad_ver(row, S(theme.compact ? 9 : 12), 0);
+        lv_obj_set_style_pad_hor(row, S(theme.compact ? 11 : 12), 0);
         if (fresh) {
             lv_obj_set_style_border_side(row, LV_BORDER_SIDE_LEFT, 0);
             lv_obj_set_style_border_width(row, 3, 0);
             lv_obj_set_style_border_color(row, theme.accent, 0);
         }
         lv_obj_t *top = ui_box(row, LV_FLEX_FLOW_ROW, 8);
-        lv_obj_t *from = ui_text(top, 14, fresh, theme.text);
+        lv_obj_t *from = ui_text(top, 13, true, theme.text);
         lv_label_set_text(from, jstr(m, "number") ? jstr(m, "number") : L("未知号码", "Unknown"));
         lv_obj_set_flex_grow(from, 1);
         char text[64];
         meta(m, text, sizeof text);
         lv_label_set_text(ui_text(top, 11, false, theme.dim), text);
-        lv_obj_t *preview = ui_text(row, 12, false, theme.dim);
-        lv_obj_set_width(preview, LV_PCT(100));
+        /* One line, as the web list shows it; the message opens in full. */
+        lv_obj_t *preview = ui_text(row, 13, false, theme.dim);
+        lv_obj_set_size(preview, LV_PCT(100), lv_font_get_line_height(F(13)));
         lv_label_set_long_mode(preview, LV_LABEL_LONG_MODE_DOTS);
         char line[160];
         snprintf(line, sizeof line, "%s", jstr(m, "text") ? jstr(m, "text") : "");
@@ -303,8 +305,8 @@ void sms_check(const cJSON *st)
 
 static void create(lv_obj_t *page)
 {
-    ui.list = ui_box(page, LV_FLEX_FLOW_COLUMN, 8);
-    ui.view = ui_box(page, LV_FLEX_FLOW_COLUMN, 10);
+    ui.list = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
+    ui.view = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     lv_obj_t *card = ui_card(ui.view);
     lv_obj_t *head = ui_box(card, LV_FLEX_FLOW_ROW, 8);
     ui.from = ui_text(head, 15, true, theme.text);
@@ -314,7 +316,9 @@ static void create(lv_obj_t *page)
     lv_obj_set_width(ui.text, LV_PCT(100));
     lv_obj_set_style_text_line_space(ui.text, S(4), 0);
     lv_label_set_long_mode(ui.text, LV_LABEL_LONG_MODE_WRAP);
-    lv_obj_t *actions = ui_box(ui.view, LV_FLEX_FLOW_ROW, 8);
+    lv_obj_t *actions = ui_card(ui.view);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_gap(actions, S(12), 0);
     lv_obj_set_flex_grow(ui_button(actions, L("返回", "Back"), on_back, NULL), 1);
     ui.delete = ui_button(actions, "", on_delete, NULL);
     lv_obj_set_flex_grow(ui.delete, 1);

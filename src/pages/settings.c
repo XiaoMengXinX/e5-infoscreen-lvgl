@@ -576,7 +576,7 @@ static void render_cat(struct view *v)
         const char *id = jstr(it, "id") ? jstr(it, "id") : "";
         /* Not offered here: the opacity and density preferences, the tip row and
          * the disclaimer. */
-        if (!strcmp(id, "ui_opacity") || !strcmp(id, "ui_density") || !strcmp(id, "donate") ||
+        if (!strcmp(id, "ui_opacity") || !strcmp(id, "donate") ||
             !strcmp(id, "disclaimer"))
             continue;
         char key[96], label[256], value[512];
@@ -1648,7 +1648,7 @@ static void create(lv_obj_t *page)
     path = ui_text(page, 12, false, theme.dim);
     lv_obj_set_width(path, LV_PCT(100));
     lv_label_set_long_mode(path, LV_LABEL_LONG_MODE_WRAP);
-    body = ui_box(page, LV_FLEX_FLOW_COLUMN, 8);
+    body = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     if (!disarm_timer) {
         disarm_timer = lv_timer_create(disarm_tick, 3000, NULL);
         lv_timer_pause(disarm_timer);

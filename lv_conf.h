@@ -11,6 +11,9 @@
 #define LV_DEF_REFR_PERIOD 5
 #define LV_USE_FLOAT 1
 
+/* Lines break at spaces, not inside numbers such as "33.1°C". */
+#define LV_TXT_BREAK_CHARS " ,;:-_)]}"
+
 #define LV_USE_OS LV_OS_PTHREAD
 #define LV_DRAW_SW_DRAW_UNIT_CNT 4
 

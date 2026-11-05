@@ -152,6 +152,52 @@ static void bars_set(lv_obj_t *obj, int on)
     lv_obj_invalidate(obj);
 }
 
+#define BOLT_W 11
+#define BOLT_H 15
+
+static float edge_distance(float px, float py, lv_point_precise_t a, lv_point_precise_t b)
+{
+    float dx = b.x - a.x, dy = b.y - a.y;
+    float t = fminf(1, fmaxf(0, ((px - a.x) * dx + (py - a.y) * dy) / (dx * dx + dy * dy)));
+    return hypotf(px - (a.x + t * dx), py - (a.y + t * dy));
+}
+
+/* The bolt as anti-aliased coverage: its outline grown by the ring, or its core. */
+static lv_draw_buf_t *bolt_mask(bool ring)
+{
+    static lv_draw_buf_t *masks[2];
+    if (masks[ring])
+        return masks[ring];
+    /* "M7 1 2 9h4l-1 6 7-9H7z" from a 12 × 16 box at 9 × 13, its outline centred in the mask. */
+    static const float path[][2] = {{7, 1}, {2, 9}, {6, 9}, {5, 15}, {12, 6}, {7, 6}};
+    enum { N = sizeof path / sizeof *path };
+    lv_point_precise_t p[N];
+    float x0 = INFINITY, x1 = -INFINITY, y0 = INFINITY, y1 = -INFINITY;
+    for (int i = 0; i < N; i++) {
+        p[i] = (lv_point_precise_t){path[i][0] * 9 / 12, path[i][1] * 13 / 16};
+        x0 = fminf(x0, p[i].x), x1 = fmaxf(x1, p[i].x), y0 = fminf(y0, p[i].y), y1 = fmaxf(y1, p[i].y);
+    }
+    for (int i = 0; i < N; i++)
+        p[i].x += (BOLT_W - x0 - x1) / 2, p[i].y += (BOLT_H - y0 - y1) / 2;
+    lv_draw_buf_t *buf = lv_draw_buf_create(BOLT_W, BOLT_H, LV_COLOR_FORMAT_A8, 0);
+    for (int y = 0; y < BOLT_H; y++) {
+        uint8_t *row = lv_draw_buf_goto_xy(buf, 0, y);
+        for (int x = 0; x < BOLT_W; x++) {
+            float px = x + 0.5f, py = y + 0.5f, d = INFINITY;
+            bool inside = false;
+            for (int i = 0, j = N - 1; i < N; j = i++) {
+                d = fminf(d, edge_distance(px, py, p[j], p[i]));
+                if ((p[i].y > py) != (p[j].y > py) && px < p[j].x + (py - p[j].y) * (p[i].x - p[j].x) / (p[i].y - p[j].y))
+                    inside = !inside;
+            }
+            /* Signed distance into the shape; the ring is a pixel outside the outline. */
+            float depth = (inside ? d : -d) + (ring ? 1.0f : 0.0f);
+            row[x] = (uint8_t)(fminf(1, fmaxf(0, depth + 0.5f)) * 255 + 0.5f);
+        }
+    }
+    return masks[ring] = buf;
+}
+
 static void battery_draw(lv_event_t *e)
 {
     lv_obj_t *obj = lv_event_get_target_obj(e);
@@ -164,9 +210,9 @@ static void battery_draw(lv_event_t *e)
     dsc.border_color = theme.dim;
     dsc.border_width = 1;
     dsc.radius = 2;
-    lv_area_t body = {a.x1, a.y1, a.x2 - 2, a.y2};
+    lv_area_t body = {a.x1, a.y1 + 2, a.x2 - 2, a.y2 - 2};
     lv_draw_rect(lv_event_get_layer(e), &dsc, &body);
-    lv_area_t tip = {a.x2 - 1, a.y1 + 3, a.x2, a.y2 - 3};
+    lv_area_t tip = {a.x2 - 1, body.y1 + 3, a.x2, body.y2 - 3};
     dsc.border_width = 0;
     dsc.bg_opa = LV_OPA_COVER;
     dsc.bg_color = theme.dim;
@@ -178,19 +224,18 @@ static void battery_draw(lv_event_t *e)
     if (fill.x2 >= fill.x1)
         lv_draw_rect(lv_event_get_layer(e), &dsc, &fill);
     if (level & 0x400) {
-        float cx = (body.x1 + body.x2 + 1) / 2.0f, cy = (body.y1 + body.y2 + 1) / 2.0f;
-        lv_draw_triangle_dsc_t bolt;
-        lv_draw_triangle_dsc_init(&bolt);
-        bolt.color = theme.bg;
-        bolt.opa = LV_OPA_COVER;
-        bolt.p[0] = (lv_point_precise_t){cx + 2.2f, cy - 4.0f};
-        bolt.p[1] = (lv_point_precise_t){cx - 3.0f, cy + 1.0f};
-        bolt.p[2] = (lv_point_precise_t){cx + 1.0f, cy + 1.0f};
-        lv_draw_triangle(lv_event_get_layer(e), &bolt);
-        bolt.p[0] = (lv_point_precise_t){cx - 2.2f, cy + 4.0f};
-        bolt.p[1] = (lv_point_precise_t){cx + 3.0f, cy - 1.0f};
-        bolt.p[2] = (lv_point_precise_t){cx - 1.0f, cy - 1.0f};
-        lv_draw_triangle(lv_event_get_layer(e), &bolt);
+        /* The web page's bolt, 9 × 13 over the battery, outlined in the bar colour. */
+        lv_draw_image_dsc_t img;
+        lv_draw_image_dsc_init(&img);
+        img.recolor_opa = LV_OPA_COVER;
+        int32_t cx = (body.x1 + body.x2 + 1) / 2, cy = (a.y1 + a.y2 + 1) / 2;
+        lv_area_t at = {cx - BOLT_W / 2, cy - BOLT_H / 2, cx - BOLT_W / 2 + BOLT_W - 1, cy - BOLT_H / 2 + BOLT_H - 1};
+        img.src = bolt_mask(true);
+        img.recolor = theme.desktop_wallpaper ? theme.bg : theme.chrome;
+        lv_draw_image(lv_event_get_layer(e), &img, &at);
+        img.src = bolt_mask(false);
+        img.recolor = theme.text;
+        lv_draw_image(lv_event_get_layer(e), &img, &at);
     }
 }
 
@@ -1228,9 +1273,9 @@ void shell_key(const struct key_event *key)
         if (key->kind == KEY_KIND_BACK)
             notice_dismiss(NULL);
         else if (key->kind == KEY_KIND_UP || key->kind == KEY_KIND_LEFT)
-            lv_group_focus_prev(ui.notice_group);
+            input_focus_move(ui.notice_group, -1);
         else if (key->kind == KEY_KIND_DOWN || key->kind == KEY_KIND_RIGHT)
-            lv_group_focus_next(ui.notice_group);
+            input_focus_move(ui.notice_group, 1);
         else if (key->kind == KEY_KIND_OK)
             input_focus_key(LV_KEY_ENTER);
         return;
@@ -1269,6 +1314,9 @@ void shell_key(const struct key_event *key)
             input_focus_key(LV_KEY_ENTER);
         break;
     case KEY_KIND_BACK:
+        /* A held Back steps back once. */
+        if (key->repeat)
+            break;
         if (field_focused())
             input_defocus();
         else
@@ -1445,7 +1493,7 @@ static void build_bar(void)
     lv_obj_set_hidden(dual, true);
     ui.bar_bat = lv_obj_create(ui.bar);
     lv_obj_remove_style_all(ui.bar_bat);
-    lv_obj_set_size(ui.bar_bat, 22, 11);
+    lv_obj_set_size(ui.bar_bat, 22, 15);
     lv_obj_add_event_cb(ui.bar_bat, battery_draw, LV_EVENT_DRAW_MAIN, NULL);
     ui.bar_pct = ui_text(ui.bar, 10, false, theme.text);
     ui.bar_clock = ui_text(ui.bar, 10, false, theme.text);
@@ -1465,7 +1513,6 @@ static void build_toolbar(void)
     lv_obj_t *back_button = tool_button(ui.toolbar, "home", 30, on_back);
     ui.back_icon = lv_obj_get_child(back_button, 0);
     ui.title = ui_text(ui.toolbar, 18, true, theme.text);
-    lv_obj_set_style_text_font(ui.title, font_get((int)lroundf(18 * fminf(theme.scale, 1.2f)), true), 0);
     lv_obj_set_style_pad_hor(ui.title, 8, 0);
     lv_label_set_long_mode(ui.title, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_flex_grow(ui.title, 1);
@@ -1532,13 +1579,17 @@ static void build_menu(void)
     lv_obj_set_style_bg_color(ui.menu, theme.bg, 0);
     lv_obj_set_style_bg_opa(ui.menu, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(ui.menu, 14, 0);
+    /* Three rows of large cells outgrow the screen at the bigger sizes. */
+    lv_obj_set_scrollable(ui.menu, true);
+    lv_obj_set_scroll_dir(ui.menu, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(ui.menu, LV_SCROLLBAR_MODE_OFF);
     lv_obj_t *head = ui_box(ui.menu, LV_FLEX_FLOW_ROW, 8);
     lv_obj_t *title = ui_text(head, 16, true, theme.text);
     lv_label_set_text(title, L("全部页面", "All pages"));
     lv_obj_set_flex_grow(title, 1);
     tool_button(head, "close", 40, on_menu);
     lv_obj_t *grid = ui_box(ui.menu, LV_FLEX_FLOW_ROW_WRAP, 8);
-    int32_t cell = (lv_display_get_horizontal_resolution(lv_display_get_default()) - 28 - 16) / 3;
+    int32_t cell = (lv_display_get_horizontal_resolution(lv_display_get_default()) - 2 * 14 - 2 * S(8)) / 3;
     /* In page order, the same order the number keys select. */
     for (int page = 0; page < PAGE_COUNT; page++) {
         lv_obj_t *b = page_button(grid, page, cell);
@@ -1652,8 +1703,14 @@ static void build(void)
     lv_group_set_default(ui.group);
     input_set_group(ui.group);
 
+    /* The chrome keeps the panel's fixed bar heights, as the web page's does: the
+     * status bar and nav at their standard size, the title at most 120 %. */
+    float scale = theme_cap(1);
     build_bar();
+    theme.scale = scale;
+    theme_cap(1.2f);
     build_toolbar();
+    theme.scale = scale;
     ui.content = lv_obj_create(ui.root);
     lv_obj_remove_style_all(ui.content);
     lv_obj_set_width(ui.content, LV_PCT(100));
@@ -1675,7 +1732,9 @@ static void build(void)
         lv_obj_set_hidden(ui.pages[i], i != (int)app.page);
     }
     build_menu();
+    theme_cap(1);
     build_nav();
+    theme.scale = scale;
     build_overlays();
     lock_create();
     phone_init();
