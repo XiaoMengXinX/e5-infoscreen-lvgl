@@ -39,7 +39,7 @@ jobs:
         run: |
           name=e5-infoscreen-lvgl-${GITHUB_SHA::7}
           mkdir -p dist/$name
-          cp out/e5-infoscreen-ui install.sh switch-ui.sh dist/$name/
+          cp out/e5-infoscreen-ui scripts/* dist/$name/
           (cd dist && zip -r $name.zip $name)
           echo "PACKAGE=dist/$name.zip" >> "$GITHUB_ENV"
 

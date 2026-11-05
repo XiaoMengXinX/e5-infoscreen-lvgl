@@ -19,7 +19,7 @@ esac
 
 # Next to this script in a release, under out/ in a source checkout.
 binary=$here/e5-infoscreen-ui
-[ -f "$binary" ] || binary=$here/out/e5-infoscreen-ui
+[ -f "$binary" ] || binary=$here/../out/e5-infoscreen-ui
 if [ "$mode" = lvgl ] && [ ! -f "$binary" ]; then
     echo "missing e5-infoscreen-ui: download a release or run python3 build.py" >&2
     exit 1
