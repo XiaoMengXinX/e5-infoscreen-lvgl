@@ -52,15 +52,17 @@ python3 stage.py <rootfs>
 ### 装到已运行的设备
 
 每次推送到 `main`，GitHub Actions 构建后发布一个 Release，附带程序本体和
-`e5-infoscreen-lvgl-<提交>.zip`（程序、`install.sh`、`switch-ui.sh`）。在设备上：
+`e5-infoscreen-lvgl-<提交>.zip`（程序、`install.sh`、`switch-ui.sh`）。
+解压后在电脑上运行，脚本通过 SSH 把程序装到设备并切换到本界面：
 
 ```sh
-unzip e5-infoscreen-lvgl-<提交>.zip
-sh e5-infoscreen-lvgl-<提交>/install.sh
+./install.sh                         # 设备默认为 root@192.168.8.1
+./install.sh root@192.168.1.1        # 指定设备
+./install.sh root@192.168.8.1 webkit # 切回网页界面
 ```
 
-`install.sh` 把程序装为 `/usr/libexec/e5-infoscreen/ui` 并切换到本界面；
-`sh switch-ui.sh webkit` 切回网页界面，`sh switch-ui.sh lvgl` 再切回来。
+在源码目录里运行时，安装的是 `out/e5-infoscreen-ui`。设备上也可以直接用
+`sh switch-ui.sh lvgl | webkit` 切换已安装的界面。
 
 ## 截图
 
