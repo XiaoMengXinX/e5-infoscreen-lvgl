@@ -126,6 +126,23 @@ lv_indev_t *input_touch(void)
     return touch_indev;
 }
 
+/* The kernel drops a position equal to the last one it reported, so a touch where
+ * the previous one ended (before this program started) brings no coordinates:
+ * start from the positions the device already holds. */
+static void seed_slots(int fd)
+{
+    struct {
+        uint32_t code;
+        int32_t values[SLOTS];
+    } slots;
+    slots.code = ABS_MT_POSITION_X;
+    if (!ioctl(fd, EVIOCGMTSLOTS(sizeof slots), &slots))
+        memcpy(touch.x, slots.values, sizeof touch.x);
+    slots.code = ABS_MT_POSITION_Y;
+    if (!ioctl(fd, EVIOCGMTSLOTS(sizeof slots), &slots))
+        memcpy(touch.y, slots.values, sizeof touch.y);
+}
+
 static void open_devices(void)
 {
     DIR *dir = opendir("/dev/input");
@@ -149,10 +166,13 @@ static void open_devices(void)
             d->kind = DEVICE_TOUCH;
             ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &d->x);
             ioctl(fd, EVIOCGABS(ABS_MT_POSITION_Y), &d->y);
+            seed_slots(fd);
         } else if (TEST(abs, ABS_X) && TEST(keys, BTN_TOUCH)) {
             d->kind = DEVICE_TOUCH;
             ioctl(fd, EVIOCGABS(ABS_X), &d->x);
             ioctl(fd, EVIOCGABS(ABS_Y), &d->y);
+            touch.x[0] = d->x.value;
+            touch.y[0] = d->y.value;
         } else if (TEST(keys, KEY_POWER) || TEST(keys, KEY_1) || TEST(keys, KEY_VOLUMEUP) || TEST(keys, KEY_BACK)) {
             d->kind = DEVICE_KEYS;
         } else {
