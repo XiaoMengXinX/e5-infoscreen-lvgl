@@ -31,11 +31,13 @@ control=$(mktemp -d)
 trap 'ssh -o ControlPath="$control/ssh" -O exit "$target" 2>/dev/null; rm -rf "$control"' EXIT
 ssh="ssh -o ControlMaster=auto -o ControlPath=$control/ssh -o ControlPersist=60"
 
+echo "Connecting to $target. If ssh asks, enter the device's password."
 if [ "$mode" = lvgl ]; then
-    echo "uploading to $target"
+    echo "Uploading the program, then installing it and restarting the screen."
     $ssh "$target" "cat > $dir/ui.new" <"$binary"
     $ssh "$target" "mv $dir/ui.new $dir/ui && sh -s lvgl" <"$here/switch-ui.sh"
 else
+    echo "Switching to the web interface."
     $ssh "$target" "sh -s webkit" <"$here/switch-ui.sh"
 fi
 echo "done: $mode interface on $target"

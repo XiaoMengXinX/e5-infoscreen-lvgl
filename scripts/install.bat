@@ -20,6 +20,7 @@ where ssh >nul 2>nul || (
 )
 
 if "%mode%"=="webkit" (
+    echo Switching %target% to the web interface. If ssh asks, enter the device's password.
     ssh "%target%" "sh -s webkit" < "%here%switch-ui.sh" || exit /b 1
     goto done
 )
@@ -34,8 +35,9 @@ if not exist "%binary%" (
 
 rem The files go through ssh itself: the device has no SFTP server for scp. Without
 rem a key, ssh asks for the password once per step.
-echo uploading to %target%
+echo Step 1/2: uploading the program to %target%. If ssh asks, enter the device's password.
 ssh "%target%" "cat > /usr/libexec/e5-infoscreen/ui.new" < "%binary%" || exit /b 1
+echo Step 2/2: installing it and restarting the screen. If ssh asks, enter the password again.
 ssh "%target%" "mv /usr/libexec/e5-infoscreen/ui.new /usr/libexec/e5-infoscreen/ui && sh -s lvgl" < "%here%switch-ui.sh" || exit /b 1
 
 :done
