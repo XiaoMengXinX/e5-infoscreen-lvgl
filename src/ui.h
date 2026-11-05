@@ -34,6 +34,8 @@ void ui_set_fmt(lv_obj_t *label, const char *fmt, ...);
 void ui_button_text(lv_obj_t *button, const char *text);
 void ui_meter_set(struct ui_meter *meter, const char *text, int percent, lv_color_t color);
 void ui_focusable(lv_obj_t *obj);
+/* Fills a ui_button with the accent color as the main action. */
+void ui_primary(lv_obj_t *button);
 
 /* The gap between the blocks of a list or a nested view, tighter when compact. */
 int ui_stack_gap(void);

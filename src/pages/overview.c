@@ -240,8 +240,7 @@ static void create(lv_obj_t *page)
     lv_obj_set_style_text_color(ui.update_error, theme.poor, 0);
     lv_obj_t *actions = ui_box(ui.update, LV_FLEX_FLOW_ROW, 8);
     ui.update_now = ui_button(actions, "", on_update_action, (void *)(intptr_t)true);
-    lv_obj_set_style_bg_color(ui.update_now, theme.accent, 0);
-    lv_obj_set_style_text_color(lv_obj_get_child(ui.update_now, 0), theme.bg, 0);
+    ui_primary(ui.update_now);
     ui.update_later = ui_button(actions, L("推迟更新", "Later"), on_update_action, (void *)(intptr_t)false);
     lv_obj_set_flex_grow(ui.update_now, 1);
     lv_obj_set_flex_grow(ui.update_later, 1);

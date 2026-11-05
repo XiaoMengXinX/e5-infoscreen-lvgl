@@ -1653,8 +1653,7 @@ static void build_overlays(void)
     lv_label_set_long_mode(ui.notice_body, LV_LABEL_LONG_MODE_WRAP);
     lv_obj_t *actions = ui_box(ui.notice, LV_FLEX_FLOW_ROW, 8);
     lv_obj_t *open = ui_button(actions, L("查看", "Open"), notice_open, NULL);
-    lv_obj_set_style_bg_color(open, theme.accent, 0);
-    lv_obj_set_style_text_color(lv_obj_get_child(open, 0), theme.bg, 0);
+    ui_primary(open);
     lv_obj_set_flex_grow(open, 1);
     lv_obj_set_flex_grow(ui_button(actions, L("稍后", "Later"), notice_dismiss, NULL), 1);
     lv_obj_set_hidden(ui.notice, true);

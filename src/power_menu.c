@@ -128,8 +128,7 @@ static void paint(void)
         }
         lv_obj_t *confirm = ui_button(sheet, L("确认", "Confirm"), on_confirm, NULL);
         lv_obj_set_width(confirm, LV_PCT(100));
-        lv_obj_set_style_bg_color(confirm, theme.accent, 0);
-        lv_obj_set_style_text_color(lv_obj_get_child(confirm, 0), theme.bg, 0);
+        ui_primary(confirm);
     }
     status = ui_note(sheet, "");
     lv_obj_set_style_text_font(status, F(13), 0);
