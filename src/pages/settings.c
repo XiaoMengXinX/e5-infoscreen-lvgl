@@ -571,7 +571,7 @@ static void render_cat(struct view *v)
         label_text(jget(it, "label"), label, sizeof label);
         /* The backend names the shared package; this UI is its LVGL rewrite. */
         if (!strcmp(id, "name"))
-            snprintf(value, sizeof value, "%s", "e5-infoscreen-lvgl");
+            snprintf(value, sizeof value, "e5-infoscreen-lvgl");
         else
             value_text(it, value, sizeof value);
         const char *icon = icon_for(id, icon_for(v->cat, NULL));
@@ -1354,7 +1354,7 @@ static void item_clicked(struct view *v, const char *id, const char *key)
         char caption[256];
         label_text(jget(it, "caption"), caption, sizeof caption);
         if (jstr(it, "src"))
-            picture_open(jstr(it, "src"), caption, NULL, NULL);
+            picture_open(jstr(it, "src"), caption);
     } else if (!strcmp(type, "choice") || !strcmp(type, "number") || !strcmp(type, "multi")) {
         open_editor(v, it);
         render();

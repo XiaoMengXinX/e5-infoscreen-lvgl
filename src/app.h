@@ -89,7 +89,7 @@ void shell_screen_changed(void);
 void toast(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void idle_reset(void);
 void screen_set_blank(bool blank);
-void picture_open(const char *src, const char *caption, const char *note, void (*closed)(void));
+void picture_open(const char *src, const char *caption);
 bool shell_overlay_open(void);
 const cJSON *screen_config(void);
 lv_obj_t *shell_root(void);

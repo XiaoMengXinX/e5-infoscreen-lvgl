@@ -94,7 +94,6 @@ void input_defocus(void)
     group->obj_focus = NULL;
     lv_group_set_editing(group, false);
     lv_obj_send_event(obj, LV_EVENT_DEFOCUSED, keypad_indev);
-    lv_obj_invalidate(obj);
 }
 
 void input_set_group(lv_group_t *group)

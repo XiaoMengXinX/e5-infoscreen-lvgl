@@ -54,7 +54,6 @@ static lv_timer_t *poll_timer, *idle_timer, *clock_timer, *toast_timer, *osd_tim
 static bool poll_busy, poll_again, first_status = true;
 static uint32_t blank_changed_at;
 static bool supply_known, supply_online;
-static void (*picture_closed)(void);
 
 static struct {
     int level, pending;
@@ -98,7 +97,6 @@ lv_obj_t *shell_content(void)
     return ui.content;
 }
 
-/* The lock is drawn below the status bar, which stays readable while locked. */
 int shell_status_bar_height(void)
 {
     return theme.status_bar ? STATUS_H : 0;
@@ -851,14 +849,10 @@ static void picture_close(lv_event_t *e)
     lv_obj_set_hidden(ui.picture, true);
     lv_obj_clean(ui.picture);
     input_set_group(ui.group);
-    void (*closed)(void) = picture_closed;
-    picture_closed = NULL;
-    if (closed)
-        closed();
     notice_render();
 }
 
-void picture_open(const char *src, const char *caption, const char *note, void (*closed)(void))
+void picture_open(const char *src, const char *caption)
 {
     char path[256];
     snprintf(path, sizeof path, "A:/usr/share/e5-infoscreen/www%s%s", src[0] == '/' ? "" : "/", src);
@@ -877,14 +871,8 @@ void picture_open(const char *src, const char *caption, const char *note, void (
     lv_obj_set_style_text_align(text, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(text, LV_LABEL_LONG_MODE_WRAP);
     lv_label_set_text(text, caption ? caption : "");
-    if (note && *note) {
-        lv_obj_t *n = ui_note(ui.picture, note);
-        lv_obj_set_style_text_align(n, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_set_style_text_font(n, F(12), 0);
-    }
     lv_obj_t *hint = ui_text(ui.picture, 12, false, theme.dim);
     lv_label_set_text(hint, L("按任意键或点一下关闭", "Any key or a tap closes this"));
-    picture_closed = closed;
     lv_obj_set_hidden(ui.picture, false);
     lv_obj_move_foreground(ui.picture);
     input_set_group(ui.picture_group);

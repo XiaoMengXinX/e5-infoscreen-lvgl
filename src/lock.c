@@ -417,7 +417,7 @@ void lock_engage(void)
     locked = true;
     wake_at = lv_tick_get();
     key_armed = 0;
-    /* The lock is drawn above the keyboard, so an open field must give it up. */
+    /* The keyboard is drawn above the lock, so an open field must give it up. */
     input_defocus();
     if (phone_is_open() && !phone_call_active())
         phone_close();
