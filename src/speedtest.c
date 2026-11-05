@@ -1,6 +1,7 @@
-/* Speed test: runs speedtest-go (speedtest.net servers) and shows its live
- * figures on a gauge. Its progress is only printed to a terminal, so it runs on
- * a pseudo-terminal and the screen lines it redraws are parsed as they come. */
+/* Speed test: runs speedtest-go (speedtest.net servers) or globalspeedtest-go
+ * (CAICT servers) and shows its live figures on a gauge. Their progress is only
+ * printed to a terminal, so they run on a pseudo-terminal and the screen lines
+ * they redraw are parsed as they come. */
 #include "speedtest.h"
 
 #include <errno.h>
@@ -19,14 +20,52 @@
 #include "theme.h"
 #include "ui.h"
 
-#define PROGRAM "/usr/bin/speedtest-go"
+/* Installs the latest release's arm64 archive. jsDelivr names the version; the
+ * archive comes through GitHub proxies reachable from mainland China, then from
+ * GitHub itself, and the first copy matching the release's checksums is taken.
+ * (The proxies answer releases/latest with a relative redirect uclient-fetch
+ * cannot follow, hence the version.) */
+static const char global_install[] =
+    "fetch() {\n"
+    "  if command -v curl >/dev/null; then curl -fsSL --connect-timeout 10 --max-time 300 -o \"$2\" \"$1\"\n"
+    "  else timeout 300 uclient-fetch -q -T 10 -O \"$2\" \"$1\"; fi\n"
+    "}\n"
+    "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cd \"$dir\" || exit 1\n"
+    "fetch https://data.jsdelivr.com/v1/packages/gh/XiaoMengXinX/globalspeedtest-go/resolved latest &&\n"
+    "  version=$(jsonfilter -i latest -e @.version) || exit 1\n"
+    "release=https://github.com/XiaoMengXinX/globalspeedtest-go/releases/download/v$version\n"
+    "name=globalspeedtest-go_${version}_Linux_arm64.tar.gz\n"
+    "for mirror in https://ghfast.top/ https://gh-proxy.com/ https://ghproxy.net/ ''; do\n"
+    "  fetch \"$mirror$release/checksums.txt\" sums && fetch \"$mirror$release/$name\" \"$name\" &&\n"
+    "    grep \" $name\\$\" sums | sha256sum -c -s || continue\n"
+    "  tar -xzOf \"$name\" globalspeedtest-go > /usr/bin/globalspeedtest-go.part &&\n"
+    "    chmod 755 /usr/bin/globalspeedtest-go.part &&\n"
+    "    mv /usr/bin/globalspeedtest-go.part /usr/bin/globalspeedtest-go\n"
+    "  exit\n"
+    "done\n"
+    "exit 1\n";
+
+struct backend {
+    const char *id, *zh, *en;
+    const char *program;
+    /* A shell script installing the program, for one that is not in the feeds. */
+    const char *install;
+};
+
+static const struct backend backends[] = {
+    {"global", "全球网测", "CAICT", "/usr/bin/globalspeedtest-go", global_install},
+    {"speedtest", "speedtest.net", "speedtest.net", "/usr/bin/speedtest-go", NULL},
+};
+#define BACKENDS ((int)(sizeof backends / sizeof *backends))
+#define BACKEND_OPTION "e5-infoscreen.main.speedtest_backend"
+static const struct backend *backend = &backends[0];
 
 /* Gauge marks, evenly spaced around the dial as on the speedtest.net app. */
 static const double marks[] = {0, 5, 10, 50, 100, 250, 500, 1000};
 #define SEGMENTS ((int)(sizeof marks / sizeof *marks) - 1)
 #define SWEEP 270
 
-enum phase { IDLE, CONNECTING, PING, DOWNLOAD, UPLOAD, DONE, FAILED };
+enum phase { IDLE, INSTALLING, CONNECTING, PING, DOWNLOAD, UPLOAD, DONE, FAILED };
 
 static struct {
     pid_t pid;
@@ -102,6 +141,7 @@ static void paint_gauge(void)
 {
     if (!ui.root)
         return;
+    bool busy = test.phase >= INSTALLING && test.phase <= UPLOAD;
     bool running = test.phase >= CONNECTING && test.phase <= UPLOAD;
     float at = gauge_position(test.shown);
     lv_arc_set_value(ui.arc, (int32_t)lroundf(at * 1000));
@@ -109,11 +149,11 @@ static void paint_gauge(void)
     for (int i = 0; i <= SEGMENTS; i++)
         lv_obj_set_style_text_color(ui.marks[i], running && (float)i / SEGMENTS <= at ? theme.text : theme.dim, 0);
     /* Before a test, and after one, only the button shows; the dial is for the test. */
-    lv_obj_set_hidden(ui.go, running);
+    lv_obj_set_hidden(ui.go, busy);
     lv_obj_set_hidden(ui.arc, !running);
     for (int i = 0; i <= SEGMENTS; i++)
         lv_obj_set_hidden(ui.marks[i], !running);
-    lv_obj_set_hidden(ui.readout, !running);
+    lv_obj_set_hidden(ui.readout, !busy);
     if (test.phase == DOWNLOAD || test.phase == UPLOAD) {
         ui_set_fmt(ui.value, test.shown >= 100 ? "%.0f" : "%.1f", test.shown);
         ui_set_fmt(ui.unit, "%s Mbps", uploading() ? "↑" : "↓");
@@ -122,9 +162,9 @@ static void paint_gauge(void)
         ui_set_text(ui.unit, L("延迟 ms", "Ping ms"));
     } else {
         ui_set_text(ui.value, "···");
-        ui_set_text(ui.unit, L("连接服务器", "Connecting"));
+        ui_set_text(ui.unit, test.phase == INSTALLING ? L("正在下载安装", "Installing") : L("连接服务器", "Connecting"));
     }
-    lv_obj_set_style_text_color(ui.unit, running ? phase_color() : theme.dim, 0);
+    lv_obj_set_style_text_color(ui.unit, busy ? phase_color() : theme.dim, 0);
     lv_obj_invalidate(ui.needle);
 }
 
@@ -171,14 +211,14 @@ static void paint(void)
     paint_result(ui.up, test.up, "%.1f");
     paint_result(ui.ping, test.ping, "%.0f");
     paint_result(ui.jitter, test.jitter, "%.0f");
-    ui_set_text(ui.sponsor, *test.sponsor ? test.sponsor : L("自动选择", "Automatic"));
-    ui_set_text(ui.place, *test.place ? test.place : "speedtest.net");
+    ui_set_text(ui.sponsor, *test.sponsor ? test.sponsor : L("切换后端", "Switch backend"));
+    ui_set_text(ui.place, *test.place ? test.place : L(backend->zh, backend->en));
     ui_set_text(ui.isp, *test.isp ? test.isp : L("本机网络", "This network"));
     ui_set_text(ui.ip, *test.ip ? test.ip : "—");
     paint_gauge();
 }
 
-/* ---------- speedtest-go output ---------- */
+/* ---------- program output ---------- */
 
 static double number_after(const char *line, const char *key)
 {
@@ -197,18 +237,24 @@ static bool rate_after(const char *line, const char *key, double *mbps)
     return end != at + strlen(key);
 }
 
-/* "Test Server: [12687] 6.56km Singapore by SIMBA Telecom" -> "SIMBA Telecom", "Singapore" */
+/* "[12687] 6.56km Singapore by SIMBA Telecom" -> "SIMBA Telecom", "Singapore";
+ * "[2104002] 大连联通 (中国) by 联通" -> "联通", "大连联通" */
 static void parse_server(const char *s)
 {
-    const char *place = strstr(s, "km ");
+    const char *place = strstr(s, "] ");
     const char *by = strstr(s, " by ");
     if (!place || !by || by < place) {
         snprintf(test.sponsor, sizeof test.sponsor, "%s", s);
         return;
     }
-    place += 3;
+    place += 2;
+    const char *km = strstr(place, "km ");
+    if (km && km < by)
+        place = km + 3;
+    const char *country = strstr(place, " (");
+    const char *end = country && country < by ? country : by;
     snprintf(test.sponsor, sizeof test.sponsor, "%s", by + 4);
-    snprintf(test.place, sizeof test.place, "%.*s", (int)(by - place), place);
+    snprintf(test.place, sizeof test.place, "%.*s", (int)(end - place), place);
 }
 
 /* Moves on to a stage; false when the test is already past it. speedtest-go
@@ -237,6 +283,11 @@ static void parse(const char *line)
             snprintf(test.isp, sizeof test.isp, "%.*s", (int)(close - open - 1), open + 1);
             snprintf(test.ip, sizeof test.ip, "%.*s", (int)(open - s - 6), s + 5);
         }
+    } else if (strstr(line, "Switching to the next server")) {
+        /* globalspeedtest-go moves on when a server fails; the next one starts over. */
+        lv_anim_delete(&test, shown_anim);
+        test.phase = CONNECTING;
+        test.ping = test.jitter = test.down = test.up = test.shown = 0;
     } else if ((s = strstr(line, "Test Server: "))) {
         parse_server(s + 13);
         reach(PING);
@@ -294,6 +345,13 @@ static void take_line(void)
         parse(clean);
 }
 
+static void run(enum phase phase, char *const argv[]);
+
+static void run_test(void)
+{
+    run(CONNECTING, (char *const[]){(char *)backend->program, NULL});
+}
+
 static void finish(void)
 {
     close(test.fd);
@@ -302,7 +360,18 @@ static void finish(void)
     waitpid(test.pid, &status, 0);
     test.pid = -1;
     lv_anim_delete(&test, shown_anim);
-    bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0 && test.down > 0;
+    bool exited = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    if (test.phase == INSTALLING) {
+        if (exited) {
+            run_test();
+            return;
+        }
+        test.phase = IDLE;
+        toast("%s", L("下载安装失败，请检查网络后重试", "The download failed; check the network and retry"));
+        paint();
+        return;
+    }
+    bool ok = exited && test.down > 0;
     test.phase = ok ? DONE : FAILED;
     test.shown = 0;
     if (!ok)
@@ -334,14 +403,8 @@ static void poll_output(lv_timer_t *t)
     }
 }
 
-static void start(void)
+static void run(enum phase phase, char *const argv[])
 {
-    if (test.pid >= 0)
-        return;
-    if (access(PROGRAM, X_OK)) {
-        toast("%s", L("未安装 speedtest-go", "speedtest-go is not installed"));
-        return;
-    }
     int fd;
     pid_t pid = forkpty(&fd, NULL, NULL, NULL);
     if (pid < 0) {
@@ -349,14 +412,42 @@ static void start(void)
         return;
     }
     if (pid == 0) {
-        execl(PROGRAM, PROGRAM, (char *)NULL);
+        execv(argv[0], argv);
         _exit(127);
     }
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     fcntl(fd, F_SETFD, FD_CLOEXEC);
-    test = (typeof(test)){.pid = pid, .fd = fd, .phase = CONNECTING};
+    test = (typeof(test)){.pid = pid, .fd = fd, .phase = phase};
     reader = lv_timer_create(poll_output, 50, NULL);
     paint();
+}
+
+static void on_install(lv_event_t *e)
+{
+    dialog_close();
+    run(INSTALLING, (char *const[]){"/bin/sh", "-c", (char *)backend->install, NULL});
+}
+
+static void start(void)
+{
+    if (test.pid >= 0)
+        return;
+    if (!access(backend->program, X_OK)) {
+        run_test();
+        return;
+    }
+    const char *name = strrchr(backend->program, '/') + 1;
+    if (!backend->install) {
+        toast(L("未安装 %s", "%s is not installed"), name);
+        return;
+    }
+    char note[160];
+    snprintf(note, sizeof note,
+             L("%s需要 %s，是否从 GitHub 下载最新版本并安装？", "%s needs %s. Download the latest release from GitHub and install it?"),
+             L(backend->zh, backend->en), name);
+    dialog_open(L("安装测速程序", "Install the speed test"), note);
+    dialog_button(L("下载安装", "Install"), on_install, NULL);
+    dialog_cancel();
 }
 
 /* Opening the view starts clean, without the last round's figures. */
@@ -388,6 +479,46 @@ void speedtest_stop(void)
 bool speedtest_running(void)
 {
     return test.pid >= 0;
+}
+
+/* ---------- backend ---------- */
+
+static void load_backend(void)
+{
+    char id[32] = "";
+    FILE *f = popen("uci -q get " BACKEND_OPTION, "r");
+    if (f) {
+        if (!fgets(id, sizeof id, f))
+            *id = 0;
+        pclose(f);
+    }
+    id[strcspn(id, "\n")] = 0;
+    for (int i = 0; i < BACKENDS; i++)
+        if (!strcmp(id, backends[i].id))
+            backend = &backends[i];
+}
+
+static void on_backend(lv_event_t *e)
+{
+    backend = lv_event_get_user_data(e);
+    dialog_close();
+    char command[128];
+    snprintf(command, sizeof command, "uci set " BACKEND_OPTION "=%s && uci commit e5-infoscreen", backend->id);
+    system(command);
+    speedtest_reset();
+}
+
+static void on_server(lv_event_t *e)
+{
+    if (test.pid >= 0)
+        return;
+    dialog_open(L("切换后端", "Switch backend"), NULL);
+    for (int i = 0; i < BACKENDS; i++) {
+        lv_obj_t *button = dialog_button(L(backends[i].zh, backends[i].en), on_backend, (void *)&backends[i]);
+        if (&backends[i] == backend)
+            ui_primary(button);
+    }
+    dialog_cancel();
 }
 
 /* ---------- view ---------- */
@@ -426,7 +557,7 @@ static lv_obj_t *stat(lv_obj_t *parent, const char *title)
     return value;
 }
 
-static void info(lv_obj_t *parent, const char *icon, lv_obj_t **title, lv_obj_t **detail)
+static lv_obj_t *info(lv_obj_t *parent, const char *icon, lv_obj_t **title, lv_obj_t **detail)
 {
     lv_obj_t *cell = ui_box(parent, LV_FLEX_FLOW_ROW, 6);
     lv_obj_set_width(cell, 0);
@@ -443,6 +574,7 @@ static void info(lv_obj_t *parent, const char *icon, lv_obj_t **title, lv_obj_t 
         lv_obj_set_width(*detail, LV_PCT(100));
         lv_label_set_long_mode(*detail, LV_LABEL_LONG_MODE_DOTS);
     }
+    return cell;
 }
 
 void speedtest_create(lv_obj_t *parent)
@@ -531,10 +663,18 @@ void speedtest_create(lv_obj_t *parent)
     lv_obj_set_style_bg_opa(ui.go, LV_OPA_30, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_border_color(ui.go, theme.text, LV_STATE_FOCUS_KEY);
 
-
     lv_obj_t *where = ui_box(ui.root, LV_FLEX_FLOW_ROW, 10);
     lv_obj_set_style_pad_top(where, S(6), 0);
     info(where, "user", &ui.isp, &ui.ip);
-    info(where, "globe", &ui.sponsor, &ui.place);
+    /* The server cell, which shows the backend before a test, switches it. */
+    lv_obj_t *server = info(where, "globe", &ui.sponsor, &ui.place);
+    lv_obj_set_style_pad_all(server, S(4), 0);
+    lv_obj_set_style_radius(server, S(11), 0);
+    lv_obj_set_style_bg_color(server, theme.button, LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(server, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_set_clickable(server, true);
+    lv_obj_add_event_cb(server, on_server, LV_EVENT_CLICKED, NULL);
+    ui_focusable(server);
+    load_backend();
     paint();
 }

@@ -34,7 +34,7 @@ static void create(lv_obj_t *page)
     list = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     ui_row(list, "phone", L("电话", "Phone"), L("双卡拨号和来电", "Dual-SIM dialer and calls"), ROW_CHEVRON, on_phone,
            NULL);
-    ui_row(list, "traffic", L("网速测试", "Speed test"), "speedtest.net", ROW_CHEVRON, on_speedtest, NULL);
+    ui_row(list, "traffic", L("网速测试", "Speed test"), NULL, ROW_CHEVRON, on_speedtest, NULL);
     ui_row(list, "settings", L("电话设置", "Phone settings"), NULL, ROW_CHEVRON, on_phone_settings, NULL);
     speed = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
     /* The dial is sized for the panel; larger display sizes would push it off. */
