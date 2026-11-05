@@ -305,6 +305,12 @@ static void load_categories(void)
     api_get("/settings", categories_loaded, NULL);
 }
 
+static const cJSON *item(struct view *v, const char *id);
+static void open_editor(struct view *v, const cJSON *it);
+
+/* An item to open as soon as its category has loaded. */
+static char open_item[64];
+
 /* Loaded into v->data: the category's items, a list, or a whole document. */
 static void data_loaded(int status, cJSON *r, void *ctx)
 {
@@ -322,8 +328,15 @@ static void data_loaded(int status, cJSON *r, void *ctx)
         if (field && !v->data)
             v->data = cJSON_CreateArray();
     }
-    if (v == top())
-        render();
+    if (v != top())
+        return;
+    if (v->kind == V_CAT && *open_item) {
+        const cJSON *it = ok ? item(v, open_item) : NULL;
+        open_item[0] = 0;
+        if (it)
+            open_editor(v, it);
+    }
+    render();
 }
 
 static void load(struct view *v, const char *path)
@@ -1599,9 +1612,10 @@ static void clicked(const char *key)
     }
 }
 
-void settings_open_category(const char *id, const char *title)
+void settings_open_category(const char *id, const char *title, const char *item_id)
 {
     settings_reset();
+    snprintf(open_item, sizeof open_item, "%s", item_id ? item_id : "");
     struct view *v = push(V_CAT, title);
     snprintf(v->cat, sizeof v->cat, "%s", id);
     load_cat(v);
@@ -1622,6 +1636,7 @@ static void on_row(lv_event_t *e)
 
 void settings_reset(void)
 {
+    open_item[0] = 0;
     while (depth)
         release(&stack[--depth]);
     disarm();

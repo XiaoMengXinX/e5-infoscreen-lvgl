@@ -8,7 +8,7 @@ static void on_phone(lv_event_t *e)
 
 static void on_phone_settings(lv_event_t *e)
 {
-    settings_open_category("plugin:phone", L("电话设置", "Phone settings"));
+    settings_open_category("plugin:phone", L("电话设置", "Phone settings"), NULL);
 }
 
 static void create(lv_obj_t *page)

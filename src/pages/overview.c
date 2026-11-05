@@ -20,7 +20,7 @@ static struct {
     lv_obj_t *boot, *boot_note, *boot_button;
     lv_obj_t *usb, *usb_title, *usb_detail;
     lv_obj_t *update, *update_version, *update_notes, *update_toggle, *update_error, *update_now, *update_later;
-    lv_obj_t *wan, *wifi, *clients, *battery, *power, *temps[8];
+    lv_obj_t *wan_word, *wan, *wifi_word, *wifi, *power_word, *power, *clients, *battery, *temps[8];
     struct ui_meter memory, storage;
 } ui;
 
@@ -169,6 +169,29 @@ static lv_obj_t *row(lv_obj_t *page, const char *label)
     return ui_kv(card, label);
 }
 
+/* A value whose leading word carries the state colour, as the web page's span does.
+ * Returns the label for the rest of the value. */
+static lv_obj_t *word_row(lv_obj_t *page, const char *label, lv_obj_t **word)
+{
+    lv_obj_t *rest = row(page, label);
+    lv_obj_t *box = ui_box(lv_obj_get_parent(rest), LV_FLEX_FLOW_ROW_WRAP, 0);
+    lv_obj_set_width(box, 0);
+    lv_obj_set_flex_grow(box, 1);
+    lv_obj_set_flex_align(box, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    *word = ui_text(box, 13, false, theme.text);
+    lv_obj_set_parent(rest, box);
+    lv_obj_set_flex_grow(rest, 0);
+    /* A pixel cap so that a long SSID wraps; see ui_row. */
+    lv_obj_set_style_max_width(rest, S(180), 0);
+    lv_label_set_text_static(rest, "");
+    return rest;
+}
+
+static void on_usb(lv_event_t *e)
+{
+    settings_open_category("usb", "USB", "usb_role");
+}
+
 static void create(lv_obj_t *page)
 {
     lv_obj_t *hero = ui_card(page);
@@ -185,7 +208,7 @@ static void create(lv_obj_t *page)
         lv_obj_set_flex_grow(col, 1);
         lv_obj_set_width(col, 0);
         lv_obj_t *line = ui_box(col, LV_FLEX_FLOW_ROW, 4);
-        lv_label_set_text(ui_text(line, 20, false, theme.accent), i ? "↑" : "↓");
+        lv_label_set_text(ui_text(line, 20, false, i ? theme.accent : theme.good), i ? "↑" : "↓");
         lv_obj_t *big = ui_text(line, 28, false, theme.text);
         lv_obj_t *unit = ui_text(col, 10, false, theme.dim);
         lv_obj_set_style_pad_left(unit, S(20), 0);
@@ -246,12 +269,16 @@ static void create(lv_obj_t *page)
     lv_label_set_long_mode(ui.usb_title, LV_LABEL_LONG_MODE_WRAP);
     ui.usb_detail = ui_text(usb_text, 10, false, theme.dim);
     lv_obj_set_hidden(ui.usb, true);
+    lv_obj_set_clickable(ui.usb, true);
+    lv_obj_set_style_bg_color(ui.usb, theme.active, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(ui.usb, on_usb, LV_EVENT_CLICKED, NULL);
+    ui_focusable(ui.usb);
 
-    ui.wan = row(page, L("网络", "Network"));
-    ui.wifi = row(page, L("热点", "Hotspot"));
+    ui.wan = word_row(page, L("网络", "Network"), &ui.wan_word);
+    ui.wifi = word_row(page, L("热点", "Hotspot"), &ui.wifi_word);
     ui.clients = row(page, L("在线设备", "Clients"));
     ui.battery = row(page, L("电池", "Battery"));
-    ui.power = row(page, L("电流 / 电压", "Current / voltage"));
+    ui.power = word_row(page, L("电流 / 电压", "Current / voltage"), &ui.power_word);
     lv_obj_t *usage = ui_card(page);
     ui.memory = ui_meter(usage, L("内存", "Memory"));
     ui.storage = ui_meter(usage, L("存储", "Storage"));
@@ -279,7 +306,7 @@ static void usage_meter(struct ui_meter *m, double used, double total)
     fmt_bytes(total, t, sizeof t);
     char text[64];
     snprintf(text, sizeof text, "%s / %s · %d%%", u, t, pct);
-    ui_meter_set(m, text, pct, pct >= 90 ? theme.poor : pct >= 75 ? theme.fair : theme.accent);
+    ui_meter_set(m, text, pct, pct >= 90 ? theme.poor : pct >= 75 ? theme.fair : theme.good);
 }
 
 static void wan_word(const cJSON *st, const char **word, lv_color_t *color)
@@ -291,7 +318,7 @@ static void wan_word(const cJSON *st, const char **word, lv_color_t *color)
     else if (!jtrue(m, "sim"))
         *word = L("无 SIM 卡", "No SIM"), *color = theme.poor;
     else if (jtrue(w, "up"))
-        *word = L("已连接", "Connected"), *color = theme.accent;
+        *word = L("已连接", "Connected"), *color = theme.good;
     else if (jtrue(w, "pending") || (state && !strcmp(state, "connecting")))
         *word = L("连接中", "Connecting"), *color = theme.fair;
     else if (reg && !strcmp(reg, "searching"))
@@ -359,25 +386,28 @@ static void status(const cJSON *st)
     const char *word;
     lv_color_t color;
     wan_word(st, &word, &color);
-    size_t len = (size_t)snprintf(text, sizeof text, "%s", word);
+    ui_set_text(ui.wan_word, word);
+    lv_obj_set_style_text_color(ui.wan_word, color, 0);
+    size_t len = 0;
+    text[0] = 0;
     if (jstr(st, "modem.tech") && jtrue(st, "wan.up"))
         len += (size_t)snprintf(text + len, sizeof text - len, " · %s", tech_name(jstr(st, "modem.tech")));
     if (jtrue(st, "wan.up") && (jstr(st, "wan.ipv4") || jstr(st, "wan.ipv6")))
         snprintf(text + len, sizeof text - len, " · %s%s%s", jstr(st, "wan.ipv4") ? "IPv4" : "",
                  jstr(st, "wan.ipv4") && jstr(st, "wan.ipv6") ? " " : "", jstr(st, "wan.ipv6") ? "IPv6" : "");
     ui_set_text(ui.wan, text);
-    lv_obj_set_style_text_color(ui.wan, color, 0);
 
     const cJSON *w = jget(st, "wifi");
     const char *state = jstr(w, "state");
     bool enabled = jtrue(w, "enabled"), up = jtrue(w, "up");
     const char *ws = !enabled ? L("已关闭", "Off") : up ? L("已开启", "On")
                    : state && !strcmp(state, "failed") ? L("未启动", "Not running") : L("启动中", "Starting");
+    ui_set_text(ui.wifi_word, ws);
+    lv_obj_set_style_text_color(ui.wifi_word, enabled && up ? theme.good : enabled ? theme.fair : theme.text, 0);
     if (jstr(w, "ssid"))
-        ui_set_fmt(ui.wifi, "%s · %s", ws, jstr(w, "ssid"));
+        ui_set_fmt(ui.wifi, " · %s", jstr(w, "ssid"));
     else
-        ui_set_text(ui.wifi, ws);
-    lv_obj_set_style_text_color(ui.wifi, enabled && up ? theme.accent : enabled ? theme.fair : theme.text, 0);
+        ui_set_text(ui.wifi, "");
 
     int total = 0, wifi = 0, usb = 0;
     const cJSON *c;
@@ -407,13 +437,16 @@ static void status(const cJSON *st)
     ui_set_text(ui.battery, text);
     double ma, mv;
     bool has_ma = jnum(bat, "current_ma", &ma);
-    len = (size_t)snprintf(text, sizeof text, "%s", has_ma ? "" : "--");
+    /* Within ±20 mA it is the gauge's idle offset: no colour, no sign. */
     if (has_ma)
-        len += (size_t)snprintf(text + len, sizeof text - len, "%s%g mA", ma >= 20 ? "+" : "", ma);
+        ui_set_fmt(ui.power_word, "%s%g mA", ma >= 20 ? "+" : "", ma);
+    else
+        ui_set_text(ui.power_word, "--");
+    lv_obj_set_style_text_color(ui.power_word, has_ma && ma >= 20 ? theme.good : has_ma && ma <= -20 ? theme.fair : theme.text, 0);
     if (jnum(bat, "voltage_mv", &mv))
-        snprintf(text + len, sizeof text - len, " · %.2f V", mv / 1000);
-    ui_set_text(ui.power, text);
-    lv_obj_set_style_text_color(ui.power, !has_ma ? theme.text : ma >= 20 ? theme.accent : ma <= -20 ? theme.fair : theme.text, 0);
+        ui_set_fmt(ui.power, " · %.2f V", mv / 1000);
+    else
+        ui_set_text(ui.power, "");
 
     double mem_total, mem_avail;
     if (jnum(st, "system.mem_total", &mem_total) && jnum(st, "system.mem_available", &mem_avail))

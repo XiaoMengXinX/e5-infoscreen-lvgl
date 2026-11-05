@@ -39,7 +39,7 @@ static struct {
     lv_obj_t *root, *wallpaper, *content, *menu;
     lv_obj_t *bar, *bar_sim, *bar_op, *bar_tech, *bar_notes, *bar_sms, *bar_bars, *bar_dual[2], *bar_bat, *bar_pct, *bar_clock;
     lv_obj_t *toolbar, *back_icon, *title, *spinner;
-    lv_obj_t *nav, *nav_buttons[5];
+    lv_obj_t *nav, *nav_pill, *nav_buttons[5];
     lv_obj_t *pages[PAGE_COUNT], *errors[PAGE_COUNT];
     lv_obj_t *toast, *osd, *osd_label, *osd_bar, *osd_value;
     lv_obj_t *notice, *notice_title, *notice_body;
@@ -48,6 +48,15 @@ static struct {
 } ui;
 
 static int nav_slots[5];
+static struct {
+    bool dragging;
+    int32_t from;
+} nav_drag;
+/* The direction of a page step, +1 or -1; 0 when a page is opened directly. */
+static int step_dir;
+/* The pill is parked past an edge while the page has no slot in the bar, and
+ * stays on that side until a slot is chosen. */
+static bool pill_away;
 static int loading[PAGE_COUNT];
 static bool load_failed[PAGE_COUNT];
 static lv_timer_t *poll_timer, *idle_timer, *clock_timer, *toast_timer, *osd_timer, *spinner_timer;
@@ -365,15 +374,140 @@ static const char *page_label(int page)
     return L(page_ops[page]->zh, page_ops[page]->en);
 }
 
+/* ---------- bottom navigation ---------- */
+
+static void navigate(int page);
+
+static void nav_highlight(int slot)
+{
+    for (int i = 0; i < 5; i++)
+        lv_obj_set_style_text_color(ui.nav_buttons[i], i == slot ? theme.accent : theme.dim, 0);
+}
+
+static void pill_x(void *obj, int32_t x)
+{
+    lv_obj_set_x(obj, x);
+}
+
+static void pill_glide(int32_t x, bool animate, lv_anim_path_cb_t path)
+{
+    lv_anim_delete(ui.nav_pill, pill_x);
+    if (!animate) {
+        lv_obj_set_x(ui.nav_pill, x);
+        return;
+    }
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, ui.nav_pill);
+    lv_anim_set_exec_cb(&a, pill_x);
+    lv_anim_set_values(&a, lv_obj_get_style_x(ui.nav_pill, 0), x);
+    lv_anim_set_duration(&a, 320);
+    lv_anim_set_path_cb(&a, path);
+    lv_anim_start(&a);
+}
+
+/* Clear of the bar's padding on the side the pages move towards. */
+static int32_t pill_off(int dir)
+{
+    return dir < 0 ? -lv_obj_get_style_width(ui.nav_pill, 0) - lv_obj_get_style_pad_left(ui.nav, 0)
+                   : lv_obj_get_width(ui.nav);
+}
+
+/* Glides the glass pill from wherever it is, a parked pill included, under a
+ * slot, settling with a slight overshoot. */
+static void pill_to(int slot, bool animate)
+{
+    lv_obj_t *b = ui.nav_buttons[slot];
+    lv_obj_set_size(ui.nav_pill, lv_obj_get_width(b), lv_obj_get_height(b));
+    lv_obj_set_y(ui.nav_pill, lv_obj_get_y(b));
+    pill_away = false;
+    pill_glide(lv_obj_get_x(b), animate, lv_anim_path_overshoot);
+}
+
+static int32_t slot_center(int slot)
+{
+    return lv_obj_get_x(ui.nav_buttons[slot]) + lv_obj_get_width(ui.nav_buttons[slot]) / 2;
+}
+
+static int nav_nearest(int32_t x)
+{
+    int best = 0;
+    for (int i = 1; i < 5; i++)
+        if (LV_ABS(slot_center(i) - x) < LV_ABS(slot_center(best) - x))
+            best = i;
+    return best;
+}
+
+static void nav_sync(void)
+{
+    if (nav_drag.dragging)
+        return;
+    int active = -1;
+    for (int i = 0; i < 5; i++)
+        if (nav_slots[i] == (int)app.page)
+            active = i;
+    nav_highlight(active);
+    lv_obj_update_layout(ui.nav);
+    bool shown = !lv_obj_is_hidden(ui.nav_pill);
+    if (active < 0) {
+        /* A page without a slot: the pill leaves the bar the way the pages go. */
+        if (shown && !pill_away)
+            pill_glide(pill_off(step_dir ? step_dir : 1), theme.motion, lv_anim_path_ease_in);
+        pill_away = true;
+        return;
+    }
+    lv_obj_set_hidden(ui.nav_pill, false);
+    pill_to(active, theme.motion && shown);
+}
+
+/* A tap picks a slot; a horizontal drag carries the pill, lighting the slot
+ * under it, and the page changes to the nearest slot when the finger lifts. */
+static void on_nav(lv_event_t *e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_point_t p;
+    lv_indev_get_point(lv_indev_active(), &p);
+    lv_area_t area;
+    lv_obj_get_content_coords(ui.nav, &area);
+    int32_t x = LV_CLAMP(slot_center(0), p.x - area.x1, slot_center(4));
+    if (code == LV_EVENT_PRESSED) {
+        nav_drag.from = x;
+    } else if (code == LV_EVENT_PRESSING) {
+        if (!nav_drag.dragging) {
+            if (LV_ABS(x - nav_drag.from) < S(8))
+                return;
+            nav_drag.dragging = true;
+            pill_away = false;
+            lv_anim_delete(ui.nav_pill, pill_x);
+            lv_obj_set_hidden(ui.nav_pill, false);
+            lv_obj_t *b = ui.nav_buttons[0];
+            /* The pill swells while it is held. */
+            lv_obj_set_size(ui.nav_pill, lv_obj_get_width(b) + S(10), lv_obj_get_height(b) + S(4));
+            lv_obj_set_y(ui.nav_pill, lv_obj_get_y(b) - S(2));
+        }
+        lv_obj_set_x(ui.nav_pill, x - (lv_obj_get_width(ui.nav_buttons[0]) + S(10)) / 2);
+        nav_highlight(nav_nearest(x));
+    } else if (code == LV_EVENT_RELEASED) {
+        int slot = nav_nearest(x);
+        nav_drag.dragging = false;
+        nav_highlight(slot);
+        pill_to(slot, theme.motion);
+        int page = nav_slots[slot];
+        navigate(page);
+        /* navigate() declines while locked or in a call; put the pill back. */
+        if ((int)app.page != page)
+            nav_sync();
+    } else if (code == LV_EVENT_PRESS_LOST) {
+        nav_drag.dragging = false;
+        nav_sync();
+    }
+}
+
 void shell_title(void)
 {
     ui_set_text(ui.title, phone_is_open() ? L("电话", "Phone") : page_label(app.page));
     icon_set(ui.back_icon, app.page == PAGE_OVERVIEW && !phone_is_open() ? "home" : "back");
-    for (int i = 0; i < 5; i++) {
-        bool active = nav_slots[i] == (int)app.page;
-        lv_obj_set_style_text_color(ui.nav_buttons[i], active ? theme.accent : theme.dim, 0);
-        lv_obj_set_style_bg_opa(ui.nav_buttons[i], active ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-    }
+    nav_sync();
 }
 
 static void spinner_show(lv_timer_t *t)
@@ -439,8 +573,6 @@ static void slide(lv_obj_t *obj, int32_t from, int32_t to)
     lv_anim_set_completed_cb(&a, slide_done);
     lv_anim_start(&a);
 }
-
-static int step_dir;
 
 void shell_show(enum page page)
 {
@@ -1123,7 +1255,10 @@ void shell_swipe(bool pressed, lv_point_t p)
 {
     if (pressed && !swipe.active) {
         idle_reset();
-        swipe.active = input_touch_count() == 1 && !lock_active() && !phone_is_open() && !power_menu_is_open() &&
+        lv_area_t nav;
+        lv_obj_get_coords(ui.nav, &nav);
+        bool in_nav = !lv_obj_is_hidden(ui.nav) && p.y >= nav.y1 && p.y <= nav.y2;
+        swipe.active = input_touch_count() == 1 && !in_nav && !lock_active() && !phone_is_open() && !power_menu_is_open() &&
                        !shell_overlay_open() && lv_obj_is_hidden(ui.menu);
         swipe.axis = 0;
         swipe.start = p;
@@ -1305,9 +1440,31 @@ static void build_nav(void)
     lv_obj_set_style_pad_gap(ui.nav, 3, 0);
     lv_obj_set_flex_flow(ui.nav, LV_FLEX_FLOW_ROW);
     lv_obj_set_scrollable(ui.nav, false);
+    lv_obj_set_clickable(ui.nav, true);
+    lv_obj_add_event_cb(ui.nav, on_nav, LV_EVENT_ALL, NULL);
+
+    /* Translucent glass: a lighter top edge fading down, and a thin rim. */
+    ui.nav_pill = lv_obj_create(ui.nav);
+    lv_obj_remove_style_all(ui.nav_pill);
+    lv_obj_set_floating(ui.nav_pill, true);
+    lv_obj_set_clickable(ui.nav_pill, false);
+    lv_obj_set_scrollable(ui.nav_pill, false);
+    lv_obj_set_style_radius(ui.nav_pill, S(16), 0);
+    lv_obj_set_style_bg_opa(ui.nav_pill, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(ui.nav_pill, lv_color_white(), 0);
+    lv_obj_set_style_bg_grad_color(ui.nav_pill, lv_color_white(), 0);
+    lv_obj_set_style_bg_grad_dir(ui.nav_pill, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_bg_main_opa(ui.nav_pill, theme.light ? LV_OPA_80 : 46, 0);
+    lv_obj_set_style_bg_grad_opa(ui.nav_pill, theme.light ? LV_OPA_50 : 14, 0);
+    lv_obj_set_style_border_width(ui.nav_pill, 1, 0);
+    lv_obj_set_style_border_color(ui.nav_pill, theme.light ? theme.line : lv_color_white(), 0);
+    lv_obj_set_style_border_opa(ui.nav_pill, theme.light ? LV_OPA_COVER : 60, 0);
+    lv_obj_set_hidden(ui.nav_pill, true);
+
     for (int i = 0; i < 5; i++) {
         ui.nav_buttons[i] = page_button(ui.nav, nav_slots[i], 0);
         lv_obj_set_flex_grow(ui.nav_buttons[i], 1);
+        lv_obj_set_clickable(ui.nav_buttons[i], false);
     }
     lv_obj_set_hidden(ui.nav, !theme.nav_bar);
 }

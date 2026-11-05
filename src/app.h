@@ -126,7 +126,7 @@ void phone_calls(cJSON *event);
 
 /* pages/settings.c */
 void settings_reset(void);
-void settings_open_category(const char *id, const char *title);
+void settings_open_category(const char *id, const char *title, const char *item);
 
 /* pages/sms.c */
 void sms_check(const cJSON *st);
