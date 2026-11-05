@@ -63,7 +63,7 @@ macOS、Linux：
 ./install.sh root@192.168.8.1 webkit # 切回网页界面
 ```
 
-Windows（需要 Windows 10 及以上自带的 OpenSSH 客户端和 tar）：
+Windows（需要 Windows 10 及以上自带的 OpenSSH 客户端）：
 
 ```bat
 install.bat
