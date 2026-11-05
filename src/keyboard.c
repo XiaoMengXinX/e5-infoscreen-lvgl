@@ -177,7 +177,7 @@ static void on_event(lv_event_t *e)
 void keyboard_bind(lv_obj_t *textarea)
 {
     lv_obj_set_style_border_side(textarea, LV_BORDER_SIDE_LEFT, LV_PART_CURSOR);
-    lv_obj_set_style_border_width(textarea, 2, LV_PART_CURSOR);
+    lv_obj_set_style_border_width(textarea, 1, LV_PART_CURSOR);
     lv_obj_set_style_border_color(textarea, theme.accent, LV_PART_CURSOR);
     lv_obj_set_style_anim_duration(textarea, 500, LV_PART_CURSOR);
     lv_obj_set_style_opa(textarea, LV_OPA_TRANSP, LV_PART_CURSOR);

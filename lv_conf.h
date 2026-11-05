@@ -7,7 +7,8 @@
 #define LV_USE_STDLIB_STRING LV_STDLIB_CLIB
 #define LV_USE_STDLIB_SPRINTF LV_STDLIB_CLIB
 
-#define LV_DEF_REFR_PERIOD 16
+/* Page flips pace the frames; a short period starts each one right after the last flip. */
+#define LV_DEF_REFR_PERIOD 5
 #define LV_USE_FLOAT 1
 
 #define LV_USE_OS LV_OS_PTHREAD
