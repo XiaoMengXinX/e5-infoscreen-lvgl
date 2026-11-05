@@ -13,12 +13,13 @@ struct span {
 };
 
 static struct {
-    lv_obj_t *choices[3], *state;
+    lv_obj_t *choices[3], *row, *state;
     struct span day, month;
     lv_obj_t *boot_rx, *boot_tx, *days;
 } ui;
 
 static int slot = -1;
+static bool locked;
 static unsigned generation;
 static lv_timer_t *refresh;
 
@@ -53,6 +54,8 @@ static void paint_choices(void)
         lv_obj_set_style_bg_color(ui.choices[i], on ? theme.active : theme.button, 0);
         lv_obj_set_style_text_color(lv_obj_get_child(ui.choices[i], 0), on ? theme.accent : theme.text, 0);
     }
+    /* The outline marks that the arrow keys drive the selector. */
+    lv_obj_set_style_outline_width(ui.row, locked ? 2 : 0, 0);
 }
 
 static void since_text(const cJSON *u, struct span *day, struct span *month)
@@ -155,15 +158,47 @@ static void load(void)
     api_get(path, loaded, (void *)(uintptr_t)++generation);
 }
 
-static void on_choice(lv_event_t *e)
+static void choose(int choice)
 {
-    int choice = (int)(intptr_t)lv_event_get_user_data(e) - 1;
     if (choice == slot)
         return;
     slot = choice;
     paint_choices();
     clear_display();
     load();
+}
+
+static void on_choice(lv_event_t *e)
+{
+    locked = false;
+    choose((int)(intptr_t)lv_event_get_user_data(e) - 1);
+}
+
+/* The arrow keys scroll this page; Enter hands the selector the left/right ones,
+ * which match the row it is drawn around. */
+static bool key(const struct key_event *key)
+{
+    if (key->kind == KEY_KIND_OK) {
+        if (key->repeat)
+            return true;
+        locked = !locked;
+        paint_choices();
+        return true;
+    }
+    int dir = key->kind == KEY_KIND_LEFT ? -1 : key->kind == KEY_KIND_RIGHT ? 1 : 0;
+    if (!locked || !dir)
+        return false;
+    choose((slot + 1 + dir + 3) % 3 - 1);
+    return true;
+}
+
+/* A tap works the selector directly, so the keys go back to scrolling. */
+static void touch(void)
+{
+    if (!locked)
+        return;
+    locked = false;
+    paint_choices();
 }
 
 void traffic_invalidate(void)
@@ -199,7 +234,13 @@ static void create(lv_obj_t *page)
         lv_obj_set_flex_grow(ui.choices[i], 1);
         lv_obj_set_style_pad_hor(ui.choices[i], S(4), 0);
         lv_obj_set_style_text_font(lv_obj_get_child(ui.choices[i], 0), F(12), 0);
+        /* Touch-only until Enter hands the arrow keys to the selector. */
+        lv_group_remove_obj(ui.choices[i]);
     }
+    ui.row = choices;
+    lv_obj_set_style_radius(choices, S(11), 0);
+    lv_obj_set_style_outline_color(choices, theme.accent, 0);
+    lv_obj_set_style_outline_pad(choices, S(4), 0);
     ui.state = ui_text(scope, 11, false, theme.dim);
     span_card(page, L("今日", "Today"), &ui.day);
     span_card(page, L("本月", "This month"), &ui.month);
@@ -227,6 +268,8 @@ static void tick(lv_timer_t *t)
 
 static void shown(void)
 {
+    locked = false;
+    paint_choices();
     load();
     if (!refresh)
         refresh = lv_timer_create(tick, 30000, NULL);
@@ -241,5 +284,5 @@ static void hidden(void)
 
 const struct page_ops traffic_page = {
     .icon = "traffic", .zh = "流量", .en = "Usage",
-    .create = create, .shown = shown, .hidden = hidden,
+    .create = create, .shown = shown, .hidden = hidden, .key = key, .touch = touch,
 };

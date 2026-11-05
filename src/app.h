@@ -50,6 +50,8 @@ struct page_ops {
     void (*shown)(void);
     void (*hidden)(void);
     void (*status)(const cJSON *st);
+    bool (*key)(const struct key_event *key);
+    void (*touch)(void);
     bool (*back)(void);
     void (*top)(void);
 };
@@ -79,6 +81,7 @@ void shell_page_loading(enum page page, bool on);
 void shell_page_error(enum page page, bool on);
 void shell_title(void);
 void shell_key(const struct key_event *key);
+void shell_touch_press(void);
 bool shell_touch_allowed(void);
 void shell_swipe(bool pressed, lv_point_t point);
 void shell_poll_now(void);

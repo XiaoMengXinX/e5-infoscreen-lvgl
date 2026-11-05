@@ -85,6 +85,9 @@ static void focus_style(lv_obj_t *obj)
 void ui_focusable(lv_obj_t *obj)
 {
     focus_style(obj);
+    /* Only input fields take focus from a tap; elsewhere it is the arrow keys. */
+    if (!lv_obj_check_type(obj, &lv_textarea_class))
+        lv_obj_set_click_focusable(obj, false);
     lv_group_t *group = lv_group_get_default();
     if (group)
         lv_group_add_obj(group, obj);

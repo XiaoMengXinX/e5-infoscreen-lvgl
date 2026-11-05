@@ -14,5 +14,6 @@ void input_dispatch(const struct pollfd *fds, int count);
 int input_touch_count(void);
 lv_indev_t *input_touch(void);
 void input_focus_key(uint32_t key);
+void input_defocus(void);
 void input_set_group(lv_group_t *group);
 lv_group_t *input_group(void);

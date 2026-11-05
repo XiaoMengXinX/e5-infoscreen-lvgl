@@ -8,6 +8,8 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include "src/core/lv_group_private.h"
+
 #include "app.h"
 
 #define SLOTS 10
@@ -78,6 +80,21 @@ void input_focus_key(uint32_t key)
     queue_key(key, LV_INDEV_STATE_RELEASED);
     while (keypad.count)
         lv_indev_read(keypad_indev);
+}
+
+/* lv_group_focus_obj(NULL) is a no-op, so dropping the focus needs the private
+ * field. The DEFOCUSED event is what clears the focus outline and closes the
+ * keyboard bound to the focused input field. */
+void input_defocus(void)
+{
+    lv_group_t *group = input_group();
+    if (!group || !group->obj_focus)
+        return;
+    lv_obj_t *obj = *group->obj_focus;
+    group->obj_focus = NULL;
+    lv_group_set_editing(group, false);
+    lv_obj_send_event(obj, LV_EVENT_DEFOCUSED, keypad_indev);
+    lv_obj_invalidate(obj);
 }
 
 void input_set_group(lv_group_t *group)
@@ -192,7 +209,10 @@ static void touch_sync(const struct device *d)
     }
     if (pressed)
         touch.point = (lv_point_t){scale(touch.x[slot], &d->x, width), scale(touch.y[slot], &d->y, height)};
+    bool was_pressed = touch.pressed;
     touch.pressed = pressed;
+    if (pressed && !was_pressed)
+        shell_touch_press();
     shell_swipe(pressed, touch.point);
     lv_indev_read(touch_indev);
 }

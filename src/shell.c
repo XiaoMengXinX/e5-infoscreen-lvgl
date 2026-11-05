@@ -23,6 +23,10 @@
 #define TOOLBAR_H 44
 #define NAV_H 52
 
+/* Kernel key repeat outruns the page slide and the focus walk. */
+#define NAV_STEP_MS 260
+#define NAV_FOCUS_MS 150
+
 struct app app = {.brightness = 120};
 
 static const struct page_ops *const page_ops[PAGE_COUNT] = {
@@ -63,6 +67,7 @@ static struct {
     uint32_t last_press;
 } power_key;
 static uint32_t last_back;
+static uint32_t last_step, last_focus;
 static bool volume_busy;
 static int volume_held;
 static bool volume_repeating;
@@ -454,7 +459,7 @@ void shell_show(enum page page)
             lv_obj_set_hidden(old, true);
         }
     }
-    lv_group_focus_obj(NULL);
+    input_defocus();
     shell_title();
     paint_load();
     if (app.status && page_ops[page]->status)
@@ -945,22 +950,42 @@ static void focus_scan(lv_obj_t *parent, struct focus_scan *scan)
     }
 }
 
+/* Arrows walk the focusable objects in reading order. Past the last one the page
+ * scrolls, and only a page that cannot scroll further wraps to the other end. */
 static void focus_move(int dir)
 {
     lv_group_t *group = input_group();
+    lv_obj_t *page = ui.pages[app.page];
     struct focus_scan scan = {.group = group, .current = lv_group_get_focused(group), .dir = dir};
     if (scan.current)
         scan.current_pos = focus_pos(scan.current);
     else
         scan.dir = 1;
-    focus_scan(ui.pages[app.page], &scan);
+    focus_scan(page, &scan);
+    if (!scan.best) {
+        if (dir > 0 ? lv_obj_get_scroll_bottom(page) > 0 : lv_obj_get_scroll_top(page) > 0) {
+            lv_obj_scroll_by_bounded(page, 0, -dir * S(80), LV_ANIM_ON);
+            return;
+        }
+        if (!scan.current)
+            return;
+        struct focus_scan wrap = {.group = group, .dir = dir};
+        focus_scan(page, &wrap);
+        scan.best = wrap.best;
+    }
     if (scan.best) {
         lv_group_focus_obj(scan.best);
+        /* LVGL marks the focus state from the group's indev, which it resolves to
+         * the touch device whenever one exists, so set it here for the keypad. */
         lv_obj_add_state(scan.best, LV_STATE_FOCUS_KEY);
         lv_obj_scroll_to_view_recursive(scan.best, LV_ANIM_ON);
-    } else if (!scan.current) {
-        lv_obj_scroll_by_bounded(ui.pages[app.page], 0, -dir * S(80), LV_ANIM_ON);
     }
+}
+
+/* The on-screen keyboard belongs to the focused input field. */
+static bool field_focused(void)
+{
+    return lv_obj_check_type(lv_group_get_focused(input_group()), &lv_textarea_class);
 }
 
 void shell_key(const struct key_event *key)
@@ -1049,6 +1074,16 @@ void shell_key(const struct key_event *key)
             input_focus_key(LV_KEY_ENTER);
         return;
     }
+    if (key->kind == KEY_KIND_UP || key->kind == KEY_KIND_DOWN || key->kind == KEY_KIND_LEFT ||
+        key->kind == KEY_KIND_RIGHT) {
+        bool vertical = key->kind == KEY_KIND_UP || key->kind == KEY_KIND_DOWN;
+        uint32_t *last = vertical ? &last_focus : &last_step;
+        if (key->repeat && lv_tick_elaps(*last) < (vertical ? NAV_FOCUS_MS : NAV_STEP_MS))
+            return;
+        *last = lv_tick_get();
+    }
+    if (page_ops[app.page]->key && page_ops[app.page]->key(key))
+        return;
     switch (key->kind) {
     case KEY_KIND_MENU:
         if (!key->repeat)
@@ -1073,7 +1108,10 @@ void shell_key(const struct key_event *key)
             input_focus_key(LV_KEY_ENTER);
         break;
     case KEY_KIND_BACK:
-        back();
+        if (field_focused())
+            input_defocus();
+        else
+            back();
         break;
     case KEY_KIND_HOTSPOT:
         navigate(PAGE_HOTSPOT);
@@ -1085,6 +1123,15 @@ void shell_key(const struct key_event *key)
     default:
         break;
     }
+}
+
+/* A tap ends the key focus, except in a field, where it is a cursor move. */
+void shell_touch_press(void)
+{
+    if (!field_focused())
+        input_defocus();
+    if (page_ops[app.page]->touch)
+        page_ops[app.page]->touch();
 }
 
 /* A horizontal swipe changes the page; once a drag goes vertical, it stays a scroll. */

@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "app.h"
+#include "input.h"
 #include "theme.h"
 
 #define NO_REPEAT LV_BUTTONMATRIX_CTRL_NO_REPEAT
@@ -113,9 +114,7 @@ static void on_key(lv_event_t *e)
     } else if (!strcmp(text, L("完成", "Done"))) {
         lv_obj_send_event(target, LV_EVENT_READY, NULL);
     } else if (!strcmp(text, LV_SYMBOL_DOWN)) {
-        lv_obj_t *ta = target;
-        keyboard_close();
-        lv_obj_remove_state(ta, LV_STATE_FOCUSED);
+        input_defocus();
     } else if (!strcmp(text, L("空格", "space"))) {
         lv_textarea_add_char(target, ' ');
     } else {
