@@ -15,6 +15,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "src/misc/lv_text_private.h"
+
 #include "app.h"
 #include "icons.h"
 #include "theme.h"
@@ -80,6 +82,7 @@ static struct {
 static struct {
     lv_obj_t *root, *arc, *needle, *readout, *value, *unit, *go;
     lv_obj_t *down, *up, *ping, *jitter, *sponsor, *place, *isp, *ip;
+    lv_obj_t *cells[2];
     lv_obj_t *marks[SEGMENTS + 1];
 } ui;
 static lv_timer_t *reader;
@@ -203,6 +206,8 @@ static void paint_result(lv_obj_t *label, double value, const char *fmt)
         ui_set_text(label, "—");
 }
 
+static void fit_info(lv_obj_t *cell);
+
 static void paint(void)
 {
     if (!ui.root)
@@ -215,6 +220,8 @@ static void paint(void)
     ui_set_text(ui.place, *test.place ? test.place : L(backend->zh, backend->en));
     ui_set_text(ui.isp, *test.isp ? test.isp : L("本机网络", "This network"));
     ui_set_text(ui.ip, *test.ip ? test.ip : "—");
+    for (int i = 0; i < 2; i++)
+        fit_info(ui.cells[i]);
     paint_gauge();
 }
 
@@ -557,23 +564,51 @@ static lv_obj_t *stat(lv_obj_t *parent, const char *title)
     return value;
 }
 
+/* One line, cut short with dots when it runs past the room it is given. */
+static lv_obj_t *info_line(lv_obj_t *parent, int size, bool bold, lv_color_t color)
+{
+    lv_obj_t *label = ui_text(parent, size, bold, color);
+    lv_obj_set_height(label, lv_font_get_line_height(lv_obj_get_style_text_font(label, 0)));
+    lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
+    return label;
+}
+
+/* Each line takes the width of its text unbroken, up to what the cell has
+ * beside its icon. (A width left to the label would follow the text broken
+ * into words, and the dots would cut the first word short.) */
+static void fit_info(lv_obj_t *cell)
+{
+    lv_obj_t *icon = lv_obj_get_child(cell, 0), *text = lv_obj_get_child(cell, 1);
+    int32_t room = lv_obj_get_content_width(cell) - lv_obj_get_width(icon) - lv_obj_get_style_pad_column(cell, 0);
+    for (uint32_t i = 0; i < lv_obj_get_child_count(text); i++) {
+        lv_obj_t *label = lv_obj_get_child(text, (int32_t)i);
+        const char *line = lv_label_get_text(label);
+        lv_text_attributes_t attributes = {.letter_space = lv_obj_get_style_text_letter_space(label, 0)};
+        int32_t width = lv_text_get_width(line, strlen(line), lv_obj_get_style_text_font(label, 0), &attributes);
+        lv_obj_set_width(label, LV_MIN(width, room));
+    }
+}
+
+static void on_info_size(lv_event_t *e)
+{
+    fit_info(lv_event_get_current_target_obj(e));
+}
+
+/* An icon and two lines, centred in half the row as the headlines above are. */
 static lv_obj_t *info(lv_obj_t *parent, const char *icon, lv_obj_t **title, lv_obj_t **detail)
 {
     lv_obj_t *cell = ui_box(parent, LV_FLEX_FLOW_ROW, 6);
     lv_obj_set_width(cell, 0);
     lv_obj_set_flex_grow(cell, 1);
+    lv_obj_set_flex_align(cell, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_all(cell, S(4), 0);
+    lv_obj_set_style_radius(cell, S(11), 0);
     lv_obj_set_style_text_color(icon_create(cell, icon, S(18)), theme.dim, 0);
     lv_obj_t *text = ui_box(cell, LV_FLEX_FLOW_COLUMN, 0);
-    lv_obj_set_width(text, 0);
-    lv_obj_set_flex_grow(text, 1);
-    *title = ui_text(text, 11, true, theme.text);
-    lv_obj_set_width(*title, LV_PCT(100));
-    lv_label_set_long_mode(*title, LV_LABEL_LONG_MODE_DOTS);
-    if (detail) {
-        *detail = ui_text(text, 10, false, theme.dim);
-        lv_obj_set_width(*detail, LV_PCT(100));
-        lv_label_set_long_mode(*detail, LV_LABEL_LONG_MODE_DOTS);
-    }
+    lv_obj_set_width(text, LV_SIZE_CONTENT);
+    *title = info_line(text, 11, true, theme.text);
+    *detail = info_line(text, 10, false, theme.dim);
+    lv_obj_add_event_cb(cell, on_info_size, LV_EVENT_SIZE_CHANGED, NULL);
     return cell;
 }
 
@@ -665,11 +700,9 @@ void speedtest_create(lv_obj_t *parent)
 
     lv_obj_t *where = ui_box(ui.root, LV_FLEX_FLOW_ROW, 10);
     lv_obj_set_style_pad_top(where, S(6), 0);
-    info(where, "user", &ui.isp, &ui.ip);
+    ui.cells[0] = info(where, "user", &ui.isp, &ui.ip);
     /* The server cell, which shows the backend before a test, switches it. */
-    lv_obj_t *server = info(where, "globe", &ui.sponsor, &ui.place);
-    lv_obj_set_style_pad_all(server, S(4), 0);
-    lv_obj_set_style_radius(server, S(11), 0);
+    lv_obj_t *server = ui.cells[1] = info(where, "globe", &ui.sponsor, &ui.place);
     lv_obj_set_style_bg_color(server, theme.button, LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(server, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_set_clickable(server, true);
