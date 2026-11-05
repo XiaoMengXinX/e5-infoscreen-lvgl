@@ -3,11 +3,11 @@ rem Run on a Windows computer that reaches the device over SSH, with the OpenSSH
 rem client that comes with Windows 10 and later.
 rem Usage: install.bat [user@host]          install this interface and switch to it
 rem        install.bat [user@host] webkit   switch the device back to the web interface
-rem The host defaults to root@192.168.8.1.
+rem The host defaults to root@192.168.9.1.
 setlocal
 set "here=%~dp0"
 set "target=%~1"
-if "%target%"=="" set "target=root@192.168.8.1"
+if "%target%"=="" set "target=root@192.168.9.1"
 set "mode=%~2"
 if "%mode%"=="" set "mode=lvgl"
 if not "%mode%"=="lvgl" if not "%mode%"=="webkit" (

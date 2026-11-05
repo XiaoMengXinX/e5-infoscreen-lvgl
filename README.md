@@ -51,28 +51,14 @@ python3 stage.py <rootfs>
 
 ### 装到已运行的设备
 
-每次推送到 `main`，GitHub Actions 构建后发布一个 Release，附带程序本体和
-`e5-infoscreen-lvgl-<提交>.zip`（程序和 `scripts/` 里的脚本）。
-解压后在电脑上运行，脚本通过 SSH 把程序装到设备并切换到本界面，设备默认为 `root@192.168.8.1`。
-
-macOS、Linux：
+从 Release 下载 zip 并解压，在电脑上运行安装脚本。默认设备为 `root@192.168.9.1`，电脑上需要有 ssh。
 
 ```sh
-./install.sh                         # 安装并切换到本界面
-./install.sh root@192.168.1.1        # 指定设备
-./install.sh root@192.168.8.1 webkit # 切回网页界面
+./install.sh                          # macOS、Linux
+install.bat                           # Windows
+./install.sh root@192.168.1.1         # 指定设备
+./install.sh root@192.168.9.1 webkit  # 切回网页界面
 ```
-
-Windows（需要 Windows 10 及以上自带的 OpenSSH 客户端）：
-
-```bat
-install.bat
-install.bat root@192.168.1.1
-install.bat root@192.168.8.1 webkit
-```
-
-在源码目录里运行 `scripts/` 下的脚本时，安装的是 `out/e5-infoscreen-ui`。
-设备上也可以直接用 `sh switch-ui.sh lvgl | webkit` 切换已安装的界面。
 
 ## 截图
 

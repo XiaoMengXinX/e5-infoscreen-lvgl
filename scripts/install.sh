@@ -2,10 +2,10 @@
 # Run on a computer that reaches the device over SSH.
 # Usage: ./install.sh [user@host]          install this interface and switch to it
 #        ./install.sh [user@host] webkit   switch the device back to the web interface
-# The host defaults to root@192.168.8.1.
+# The host defaults to root@192.168.9.1.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
-target=${1:-root@192.168.8.1}
+target=${1:-root@192.168.9.1}
 mode=${2:-lvgl}
 dir=/usr/libexec/e5-infoscreen
 
