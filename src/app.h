@@ -115,11 +115,16 @@ void power_menu_close(void);
 bool power_menu_is_open(void);
 bool power_menu_key(const struct key_event *key);
 
+/* dialog.c */
+void dialog_open(const char *title, const char *note);
+lv_obj_t *dialog_button(const char *text, lv_event_cb_t cb, void *ctx);
+void dialog_cancel(void);
+void dialog_close(void);
+bool dialog_is_open(void);
+bool dialog_key(const struct key_event *key);
+
 /* record.c */
 void record_prompt(void);
-void record_prompt_close(void);
-bool record_prompt_open(void);
-bool record_prompt_key(const struct key_event *key);
 bool record_active(void);
 void record_stop(void);
 

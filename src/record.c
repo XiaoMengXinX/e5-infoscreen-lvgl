@@ -10,7 +10,6 @@
 
 #include "app.h"
 #include "drm.h"
-#include "input.h"
 #include "theme.h"
 #include "ui.h"
 
@@ -46,8 +45,6 @@ static pthread_t worker;
 static bool recording;
 static uint32_t width, height, started, captured, end_ms;
 static lv_timer_t *timer;
-static lv_obj_t *root, *sheet;
-static lv_group_t *group, *previous_group;
 
 /* ---------- QuickTime movie ---------- */
 
@@ -341,110 +338,25 @@ void record_stop(void)
 
 /* ---------- prompt ---------- */
 
-bool record_prompt_open(void)
-{
-    return root != NULL;
-}
-
-void record_prompt_close(void)
-{
-    if (!root)
-        return;
-    lv_obj_delete(root);
-    root = NULL;
-    lv_group_delete(group);
-    group = NULL;
-    input_set_group(previous_group);
-    idle_reset();
-}
-
 static void on_start(lv_event_t *e)
 {
-    record_prompt_close();
+    dialog_close();
     start();
-}
-
-static void on_cancel(lv_event_t *e)
-{
-    record_prompt_close();
-}
-
-static void on_backdrop(lv_event_t *e)
-{
-    if (lv_event_get_target_obj(e) == root)
-        record_prompt_close();
 }
 
 void record_prompt(void)
 {
-    if (root || recording)
+    if (dialog_is_open() || recording)
         return;
     if (app.blank)
         screen_set_blank(false);
     if (app.blank)
         return;
-    previous_group = input_group();
-    group = lv_group_create();
-    input_set_group(group);
-    root = lv_obj_create(lv_layer_sys());
-    lv_obj_remove_style_all(root);
-    lv_obj_set_size(root, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_style_bg_color(root, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(root, LV_OPA_60, 0);
-    lv_obj_set_style_pad_all(root, S(18), 0);
-    lv_obj_add_event_cb(root, on_backdrop, LV_EVENT_CLICKED, NULL);
-    sheet = ui_box(root, LV_FLEX_FLOW_COLUMN, 8);
-    lv_obj_center(sheet);
-    lv_obj_set_clickable(sheet, true);
-    lv_obj_set_style_bg_color(sheet, theme.bg, 0);
-    lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(sheet, theme.line, 0);
-    lv_obj_set_style_border_width(sheet, 1, 0);
-    lv_obj_set_style_radius(sheet, S(24), 0);
-    lv_obj_set_style_pad_all(sheet, S(16), 0);
-    lv_obj_set_style_pad_top(sheet, S(20), 0);
-
-    lv_group_t *outer = lv_group_get_default();
-    lv_group_set_default(group);
-    lv_label_set_text(ui_text(sheet, 21, true, theme.text), L("屏幕录制", "Screen recording"));
-    lv_obj_t *note = ui_note(sheet, L("最长录制 1 分钟，同时按音量加和音量减结束\n保存到 " RECORD_PATH,
-                                      "Up to one minute; press both volume keys to stop\nSaved to " RECORD_PATH));
-    lv_obj_set_style_text_font(note, F(13), 0);
-    lv_obj_t *go = ui_button(sheet, L("开始录制", "Start recording"), on_start, NULL);
-    lv_obj_set_width(go, LV_PCT(100));
+    dialog_open(L("屏幕录制", "Screen recording"),
+                L("最长录制 1 分钟，同时按音量加和音量减结束\n保存到 " RECORD_PATH,
+                  "Up to one minute; press both volume keys to stop\nSaved to " RECORD_PATH));
+    lv_obj_t *go = dialog_button(L("开始录制", "Start recording"), on_start, NULL);
     lv_obj_set_style_bg_color(go, theme.poor, 0);
     lv_obj_set_style_text_color(lv_obj_get_child(go, 0), lv_color_white(), 0);
-    lv_obj_t *cancel = ui_button(sheet, L("取消", "Cancel"), on_cancel, NULL);
-    lv_obj_set_width(cancel, LV_PCT(100));
-    lv_obj_set_style_bg_opa(cancel, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_text_color(lv_obj_get_child(cancel, 0), theme.dim, 0);
-    lv_group_focus_obj(go);
-    lv_group_set_default(outer);
-    idle_reset();
-}
-
-bool record_prompt_key(const struct key_event *key)
-{
-    if (!root)
-        return false;
-    switch (key->kind) {
-    case KEY_KIND_BACK:
-        record_prompt_close();
-        break;
-    case KEY_KIND_OK:
-        if (!key->repeat)
-            input_focus_key(LV_KEY_ENTER);
-        break;
-    case KEY_KIND_UP:
-    case KEY_KIND_LEFT:
-        input_focus_move(group, -1);
-        break;
-    case KEY_KIND_DOWN:
-    case KEY_KIND_RIGHT:
-        input_focus_move(group, 1);
-        break;
-    default:
-        break;
-    }
-    return true;
+    dialog_cancel();
 }

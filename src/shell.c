@@ -1258,7 +1258,7 @@ void shell_key(const struct key_event *key)
         power_menu_key(key);
         return;
     }
-    if (record_prompt_key(key))
+    if (dialog_key(key))
         return;
     if (phone_key(key) || lock_key(key))
         return;
@@ -1355,7 +1355,7 @@ void shell_swipe(bool pressed, lv_point_t p)
         lv_area_t nav;
         lv_obj_get_coords(ui.nav, &nav);
         bool in_nav = !lv_obj_is_hidden(ui.nav) && p.y >= nav.y1 && p.y <= nav.y2;
-        swipe.active = input_touch_count() == 1 && !in_nav && !lock_active() && !phone_is_open() && !power_menu_is_open() &&
+        swipe.active = input_touch_count() == 1 && !in_nav && !lock_active() && !phone_is_open() && !power_menu_is_open() && !dialog_is_open() &&
                        !shell_overlay_open() && lv_obj_is_hidden(ui.menu);
         swipe.axis = 0;
         swipe.start = p;
@@ -1741,7 +1741,7 @@ void shell_rebuild(void)
 {
     keyboard_close();
     power_menu_close();
-    record_prompt_close();
+    dialog_close();
     lv_obj_clean(lv_layer_sys());
     lv_obj_clean(lv_layer_top());
     lv_obj_delete(ui.root);
