@@ -16,7 +16,7 @@ export TZ=${TZ:-UTC0}
 
 # wait up to ten seconds for the api instance (8088 = 0x1F98, listening = 0A)
 i=0
-while ! grep -q ':1F98 00000000:0000 0A' /proc/net/tcp && [ $i -lt 100 ]; do /opt/e5/bin/busybox sleep 0.1; i=$((i + 1)); done
+while ! grep -q  ':1F98 00000000:0000 0A' /proc/net/tcp && [ $i -lt 100 ]; do /opt/e5/bin/busybox sleep 0.1; i=$((i + 1)); done
 
 exec /usr/libexec/e5-infoscreen/ui
 SESSION

@@ -52,9 +52,13 @@ static struct {
     bool dragging;
     int32_t from;
 } nav_drag;
-/* While the page has no slot in the bar the pill is parked past an edge: +1 right,
+/* The direction of a page step, +1 or -1; 0 when a page is opened directly. */
+static int step_dir;
+/* +1 when the new page comes in from the right, -1 from the left. */
+static int slide_dir = 1;
+/* While the page has no slot in the bar the pill waits past an edge: +1 right,
  * -1 left, 0 when it sits under a slot. */
-static int pill_parked;
+static int pill_side;
 static int loading[PAGE_COUNT];
 static bool load_failed[PAGE_COUNT];
 static lv_timer_t *poll_timer, *idle_timer, *clock_timer, *toast_timer, *osd_timer, *spinner_timer;
@@ -472,14 +476,19 @@ static int32_t pill_off(int dir)
                    : lv_obj_get_width(ui.nav);
 }
 
-/* Glides the glass pill from wherever it is, a parked pill included, under a
- * slot, settling with a slight overshoot. */
+/* Glides the glass pill under a slot, settling with a slight overshoot. A step
+ * brings a waiting pill in moving the way of the step; opening a page directly
+ * brings it from the side where it waits. */
 static void pill_to(int slot, bool animate)
 {
     lv_obj_t *b = ui.nav_buttons[slot];
     lv_obj_set_size(ui.nav_pill, lv_obj_get_width(b), lv_obj_get_height(b));
     lv_obj_set_y(ui.nav_pill, lv_obj_get_y(b));
-    pill_parked = 0;
+    if (pill_side) {
+        lv_anim_delete(ui.nav_pill, pill_x);
+        lv_obj_set_x(ui.nav_pill, pill_off(step_dir ? -step_dir : pill_side));
+        pill_side = 0;
+    }
     pill_glide(lv_obj_get_x(b), animate, lv_anim_path_overshoot);
 }
 
@@ -497,43 +506,29 @@ static int nav_nearest(int32_t x)
     return best;
 }
 
-/* Pages without a slot come after the last slot and wrap round to the first, so
- * the nearer half of them park the pill past the right edge and the rest past the
- * left. Paging through them then always moves the pill the way the pages move. */
-static int park_side(int page)
+static int slot_of(int page)
 {
-    int order[PAGE_COUNT], n = page_order(order), slotted = 0;
-    for (int i = 0; i < n; i++)
-        for (int j = 0; j < 5; j++)
-            if (order[i] == nav_slots[j]) {
-                slotted++;
-                break;
-            }
-    int unslotted = n - slotted;
-    return page_position(page) - slotted < (unslotted + 1) / 2 ? 1 : -1;
+    for (int i = 0; i < 5; i++)
+        if (nav_slots[i] == page)
+            return i;
+    return -1;
 }
 
 static void nav_sync(void)
 {
     if (nav_drag.dragging)
         return;
-    int active = -1;
-    for (int i = 0; i < 5; i++)
-        if (nav_slots[i] == (int)app.page)
-            active = i;
+    int active = slot_of(app.page);
     nav_highlight(active);
     lv_obj_update_layout(ui.nav);
     bool shown = !lv_obj_is_hidden(ui.nav_pill);
     if (active < 0) {
-        int side = park_side(app.page);
-        if (!pill_parked) {
-            if (shown)
-                pill_glide(pill_off(side), theme.motion, lv_anim_path_ease_in);
-        } else if (pill_parked != side) {
-            lv_anim_delete(ui.nav_pill, pill_x);
-            lv_obj_set_x(ui.nav_pill, pill_off(side));
+        /* A step carries it on past the end of the bar; opening a page directly
+         * takes it out with the old page. */
+        if (shown && !pill_side) {
+            pill_side = step_dir ? step_dir : -slide_dir;
+            pill_glide(pill_off(pill_side), theme.motion, lv_anim_path_ease_in);
         }
-        pill_parked = side;
         return;
     }
     lv_obj_set_hidden(ui.nav_pill, false);
@@ -557,7 +552,7 @@ static void on_nav(lv_event_t *e)
             if (LV_ABS(x - nav_drag.from) < S(8))
                 return;
             nav_drag.dragging = true;
-            pill_parked = 0;
+            pill_side = 0;
             lv_anim_delete(ui.nav_pill, pill_x);
             lv_obj_set_hidden(ui.nav_pill, false);
             lv_obj_t *b = ui.nav_buttons[0];
@@ -568,11 +563,9 @@ static void on_nav(lv_event_t *e)
         lv_obj_set_x(ui.nav_pill, x - (lv_obj_get_width(ui.nav_buttons[0]) + S(10)) / 2);
         nav_highlight(nav_nearest(x));
     } else if (code == LV_EVENT_RELEASED) {
-        int slot = nav_nearest(x);
         nav_drag.dragging = false;
-        nav_highlight(slot);
-        pill_to(slot, theme.motion);
-        int page = nav_slots[slot];
+        int page = nav_slots[nav_nearest(x)];
+        /* Showing the page moves the pill, after the slide direction is known. */
         navigate(page);
         /* navigate() declines while locked or in a call; put the pill back. */
         if ((int)app.page != page)
@@ -654,9 +647,6 @@ static void slide(lv_obj_t *obj, int32_t from, int32_t to)
     lv_anim_start(&a);
 }
 
-/* The direction of a page step, +1 or -1; 0 when a page is opened directly. */
-static int step_dir;
-
 void shell_show(enum page page)
 {
     enum page previous = app.page;
@@ -669,11 +659,18 @@ void shell_show(enum page page)
         lv_anim_delete(now, slide_x);
         lv_obj_set_hidden(now, false);
         lv_obj_scroll_to_y(now, 0, LV_ANIM_OFF);
+        /* Opening a slotted page from outside the bar slides the pages the way the
+         * waiting pill comes in, so both move together. */
+        if (step_dir)
+            slide_dir = step_dir;
+        else if (pill_side && slot_of(page) >= 0)
+            slide_dir = pill_side;
+        else
+            slide_dir = page_position(page) > page_position(previous) ? 1 : -1;
         if (theme.motion) {
             int32_t w = lv_obj_get_width(ui.content);
-            int dir = step_dir ? step_dir : page_position(page) > page_position(previous) ? 1 : -1;
-            slide(old, 0, -dir * w);
-            slide(now, dir * w, 0);
+            slide(old, 0, -slide_dir * w);
+            slide(now, slide_dir * w, 0);
         } else {
             lv_obj_set_hidden(old, true);
         }
