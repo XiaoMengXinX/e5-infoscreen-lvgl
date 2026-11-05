@@ -1,0 +1,131 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "cJSON.h"
+#include "lvgl.h"
+
+enum page {
+    PAGE_OVERVIEW,
+    PAGE_SIGNAL,
+    PAGE_TRAFFIC,
+    PAGE_SMS,
+    PAGE_HOTSPOT,
+    PAGE_DEVICE,
+    PAGE_DETAILS,
+    PAGE_SETTINGS,
+    PAGE_APPS,
+    PAGE_COUNT
+};
+
+enum key_kind {
+    KEY_KIND_NONE,
+    KEY_KIND_POWER,
+    KEY_KIND_VOLUP,
+    KEY_KIND_VOLDOWN,
+    KEY_KIND_BACK,
+    KEY_KIND_MENU,
+    KEY_KIND_CALL,
+    KEY_KIND_HOTSPOT,
+    KEY_KIND_OK,
+    KEY_KIND_UP,
+    KEY_KIND_DOWN,
+    KEY_KIND_LEFT,
+    KEY_KIND_RIGHT,
+    KEY_KIND_CHAR,
+};
+
+struct key_event {
+    enum key_kind kind;
+    char ch;
+    bool down;
+    bool repeat;
+};
+
+struct page_ops {
+    const char *icon;
+    const char *zh, *en;
+    void (*create)(lv_obj_t *parent);
+    void (*shown)(void);
+    void (*hidden)(void);
+    void (*status)(const cJSON *st);
+    bool (*back)(void);
+    void (*top)(void);
+};
+
+extern const struct page_ops overview_page, signal_page, traffic_page, sms_page, hotspot_page,
+    device_page, details_page, settings_page, apps_page;
+
+struct app {
+    cJSON *status;
+    bool en;
+    bool blank;
+    bool keylock;
+    enum page page;
+    int brightness;
+};
+
+extern struct app app;
+
+static inline const char *L(const char *zh, const char *en) { return app.en ? en : zh; }
+
+/* shell.c */
+void shell_init(void);
+void shell_rebuild(void);
+void shell_show(enum page page);
+void shell_step(int delta);
+void shell_page_loading(enum page page, bool on);
+void shell_page_error(enum page page, bool on);
+void shell_title(void);
+void shell_key(const struct key_event *key);
+bool shell_touch_allowed(void);
+void shell_swipe(bool pressed, lv_point_t point);
+void shell_poll_now(void);
+void shell_screen_changed(void);
+void toast(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void idle_reset(void);
+void screen_set_blank(bool blank);
+void picture_open(const char *src, const char *caption, const char *note, void (*closed)(void));
+bool shell_overlay_open(void);
+const cJSON *screen_config(void);
+lv_obj_t *shell_root(void);
+lv_obj_t *shell_content(void);
+
+/* lock.c */
+void lock_create(void);
+void lock_engage(void);
+bool lock_active(void);
+bool lock_touch_blocked(void);
+void lock_status(const cJSON *st);
+void lock_clock(void);
+void lock_power(bool blank);
+bool lock_key(const struct key_event *key);
+void lock_refresh_usage(void);
+
+/* power_menu.c */
+void power_menu_open(void);
+void power_menu_close(void);
+bool power_menu_is_open(void);
+bool power_menu_key(const struct key_event *key);
+
+/* phone.c */
+void phone_init(void);
+void phone_open(void);
+void phone_close(void);
+bool phone_is_open(void);
+bool phone_call_active(void);
+bool phone_key(const struct key_event *key);
+bool phone_keep_awake(void);
+void phone_screen_wake(void);
+void phone_calls(cJSON *event);
+
+/* pages/settings.c */
+void settings_reset(void);
+void settings_open_category(const char *id, const char *title);
+
+/* pages/sms.c */
+void sms_check(const cJSON *st);
+
+/* pages/traffic.c */
+void traffic_invalidate(void);
