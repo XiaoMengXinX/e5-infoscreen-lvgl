@@ -37,7 +37,7 @@ static const char global_install[] =
     "  version=$(jsonfilter -i latest -e @.version) || exit 1\n"
     "release=https://github.com/XiaoMengXinX/globalspeedtest-go/releases/download/v$version\n"
     "name=globalspeedtest-go_${version}_Linux_arm64.tar.gz\n"
-    "for mirror in https://ghfast.top/ https://gh-proxy.com/ https://ghproxy.net/ ''; do\n"
+    "for mirror in https://gh-proxy.org/ https://cdn.gh-proxy.org/ https://ghproxy.net/ ''; do\n"
     "  fetch \"$mirror$release/checksums.txt\" sums && fetch \"$mirror$release/$name\" \"$name\" &&\n"
     "    grep \" $name\\$\" sums | sha256sum -c -s || continue\n"
     "  tar -xzOf \"$name\" globalspeedtest-go > /usr/bin/globalspeedtest-go.part &&\n"
