@@ -51,13 +51,19 @@ python3 stage.py <rootfs>
 
 ### 装到已运行的设备
 
-从 Release 下载 zip 并解压，在电脑上运行安装脚本。默认设备为 `root@192.168.9.1`，电脑上需要有 ssh。
+从 Release 下载 zip 并解压，在电脑上运行安装脚本，按提示输入设备的 SSH 地址（如 `root@192.168.9.1`）。电脑上需要有 ssh。
 
 ```sh
 ./install.sh                          # macOS、Linux
 install.bat                           # Windows
-./install.sh root@192.168.1.1         # 指定设备
-./install.sh root@192.168.9.1 webkit  # 切回网页界面
+./install.sh root@192.168.1.1         # 直接指定设备
+```
+
+卸载会切回网页界面，并删除本程序及其缓存、设置和开机服务：
+
+```sh
+./uninstall.sh                        # macOS、Linux
+uninstall.bat                         # Windows
 ```
 
 ## 截图
