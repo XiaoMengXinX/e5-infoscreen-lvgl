@@ -12,12 +12,14 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -79,13 +81,11 @@ static struct card {
 } cards[2];
 
 /* Card 1's URCs come on ring 0 and card 2's on ring 3, once the modem is in
- * its dual-SIM channel mapping (AT+SMMSWAP=0, which Android's RIL sends at
- * handshake); otherwise both come on ring 0 with nothing to tell them apart. */
+ * its dual-SIM channel mapping; see stk_map_channels. */
 static struct ring_line {
     char line[1200];
     size_t len;
 } rings[2];
-static bool mapped;
 
 static struct {
     lv_obj_t *root, *switcher, *tabs[2], *body;
@@ -1193,10 +1193,6 @@ static void tick(lv_timer_t *t)
 {
     at_poll();
     trace_poll();
-    if (!mapped) {
-        mapped = true;
-        at_send(0, "AT+SMMSWAP=0");
-    }
     for (int c = 0; c < 2; c++) {
         expire(c);
         if (!cards[c].registered && present(c)) {
@@ -1463,6 +1459,59 @@ static void session_restore(int c)
         show_command(k);
     k->pending = true;
     k->since = lv_tick_get() - (boot_ms() - since);
+}
+
+static bool command_ok(int fd, const char *command, int timeout_ms)
+{
+    char reply[256];
+    size_t used = 0;
+    if (write(fd, command, strlen(command)) != (ssize_t)strlen(command))
+        return false;
+    for (int waited = 0; waited < timeout_ms && used + 1 < sizeof reply; waited += 100) {
+        struct pollfd p = {fd, POLLIN, 0};
+        if (poll(&p, 1, 100) <= 0)
+            continue;
+        ssize_t n = read(fd, reply + used, sizeof reply - 1 - used);
+        if (n > 0) {
+            used += (size_t)n;
+            reply[used] = 0;
+            if (strstr(reply, "OK\r\n"))
+                return true;
+            if (strstr(reply, "ERROR"))
+                return false;
+        }
+    }
+    return false;
+}
+
+/* At its default of 1 the modem sends both cards' URCs on ring 0 with nothing
+ * to tell them apart; at 0, which Android's RIL sets first at its handshake,
+ * card 2's come on ring 3. The SIMs' toolkits queue what they send on the
+ * mapping of the moment, so this runs at boot, as soon as the CP answers and
+ * before ModemManager powers the SIMs, on a channel nothing else uses. */
+int stk_map_channels(void)
+{
+    static const char port[] = "/dev/stty_nr5";
+    for (int tries = 0; tries < 600; tries++) {
+        int fd = open(port, O_RDWR | O_NONBLOCK | O_CLOEXEC | O_NOCTTY);
+        if (fd >= 0) {
+            struct termios t;
+            if (!tcgetattr(fd, &t)) {
+                cfmakeraw(&t);
+                tcsetattr(fd, TCSANOW, &t);
+            }
+            bool ready = command_ok(fd, "AT\r", 1000);
+            bool mapped = ready && command_ok(fd, "AT+SMMSWAP=0\r", 3000);
+            close(fd);
+            if (ready) {
+                fprintf(stderr, "dual-SIM channel mapping %s\n", mapped ? "set" : "refused");
+                return mapped ? 0 : 1;
+            }
+        }
+        usleep(200000);
+    }
+    fprintf(stderr, "%s: no answer\n", port);
+    return 1;
 }
 
 void stk_create(lv_obj_t *parent)

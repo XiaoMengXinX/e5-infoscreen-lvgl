@@ -22,11 +22,31 @@ exec /usr/libexec/e5-infoscreen/ui
 SESSION
     chmod 755 $dir/session.new
     mv $dir/session.new $dir/session
+    # The SIM toolkit tells the two cards apart only once the modem is in its
+    # dual-SIM channel mapping, set at boot before the SIMs start.
+    cat > /etc/init.d/e5-infoscreen-sim <<'SERVICE'
+#!/bin/sh /etc/rc.common
+START=22
+USE_PROCD=1
+
+start_service() {
+	procd_open_instance
+	procd_set_param command /usr/libexec/e5-infoscreen/ui --map-sim-channels
+	procd_set_param stderr 1
+	procd_close_instance
+}
+SERVICE
+    chmod 755 /etc/init.d/e5-infoscreen-sim
+    /etc/init.d/e5-infoscreen-sim enable
     ;;
 webkit)
     [ -e $dir/session.webkit ] || { echo "missing $dir/session.webkit" >&2; exit 1; }
     cp -p $dir/session.webkit $dir/session.new
     mv $dir/session.new $dir/session
+    if [ -e /etc/init.d/e5-infoscreen-sim ]; then
+        /etc/init.d/e5-infoscreen-sim disable
+        rm /etc/init.d/e5-infoscreen-sim
+    fi
     ;;
 *)
     echo "usage: $0 lvgl | webkit" >&2

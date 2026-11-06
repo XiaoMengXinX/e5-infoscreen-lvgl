@@ -1,5 +1,6 @@
 #include <poll.h>
 #include <signal.h>
+#include <string.h>
 #include <time.h>
 
 #include "api.h"
@@ -7,6 +8,7 @@
 #include "drm.h"
 #include "font.h"
 #include "input.h"
+#include "stk.h"
 
 static uint32_t tick_ms(void)
 {
@@ -22,8 +24,10 @@ static void request_dump(int sig)
     dump_requested = 1;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "--map-sim-channels"))
+        return stk_map_channels();
     signal(SIGPIPE, SIG_IGN);
     signal(SIGUSR1, request_dump);
     lv_init();

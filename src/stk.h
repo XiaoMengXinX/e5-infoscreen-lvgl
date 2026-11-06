@@ -6,6 +6,8 @@
 
 struct key_event;
 
+/* Sets the modem's dual-SIM channel mapping, for the boot service; 0 when set. */
+int stk_map_channels(void);
 void stk_create(lv_obj_t *parent);
 void stk_open(void);
 void stk_close(void);
