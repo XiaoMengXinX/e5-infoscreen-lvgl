@@ -480,8 +480,7 @@ struct post {
     unsigned serial;
     char id[64];
     cJSON *value;
-    char job[40], service[16];
-    int slot;
+    char job[40], service[16], slot[4];
     uint32_t until;
 };
 
@@ -516,7 +515,7 @@ static void job_poll(lv_timer_t *t)
 {
     struct post *p = lv_timer_get_user_data(t);
     char path[160];
-    snprintf(path, sizeof path, "/network-job?id=%s&slot=%d&service=%s", p->job, p->slot, p->service);
+    snprintf(path, sizeof path, "/network-job?id=%s&slot=%s&service=%s", p->job, p->slot, p->service);
     api_get(path, job_read, p);
 }
 
@@ -612,7 +611,7 @@ static void posted(int status, cJSON *r, void *ctx)
     if (api_reply_ok(r) && jtrue(r, "pending") && jstr(r, "job")) {
         snprintf(p->job, sizeof p->job, "%s", jstr(r, "job"));
         snprintf(p->service, sizeof p->service, "%s", jstr_or(r, "service", "lock"));
-        p->slot = (int)jnum_or(r, "slot", 0);
+        snprintf(p->slot, sizeof p->slot, "%s", jstr_or(r, "slot", "0"));
         p->until = lv_tick_get() + 245000;
         lv_timer_set_repeat_count(lv_timer_create(job_poll, 800, p), 1);
         return;
