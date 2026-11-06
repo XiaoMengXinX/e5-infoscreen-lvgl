@@ -70,7 +70,7 @@ static const struct {
     {"speed_unit", "traffic"}, {"ui_theme", "palette"}, {"ui_size", "type"},
     {"ui_accent", "palette"}, {"ui_motion", "motion"}, {"status_bar", "layout"},
     {"nav_bar", "navigation"}, {"lock_enabled", "lock"}, {"lock_daily", "traffic"}, {"lock_monthly", "traffic"},
-    {"lock_speed", "signal"}, {"unlock_distance", "touch"}, {"lock_keys", "keypad"}, {"brightness", "sun"}, {"idle", "clock"},
+    {"lock_speed", "signal"}, {"unlock_distance", "touch"}, {"lock_keys", "keypad"}, {"roaming", "globe"}, {"brightness", "sun"}, {"idle", "clock"},
     {"touch", "touch"}, {"lang", "globe"}, {"volume", "volume"}, {"call_volume", "phone"}, {"vibrate", "bell"},
     {"sim_card", "simcard"}, {"apn", "globe"}, {"net_mode", "signal"}, {"nr_mode", "signal"},
     {"lte_bands", "signal"}, {"nr_bands", "signal"}, {"cell_lock", "lock"}, {"bands_default", "refresh"},
@@ -364,6 +364,23 @@ static int item_index(const cJSON *items, const char *id)
     return i;
 }
 
+/* The data roaming policy per SIM, as the dialing script reads it; setting it
+ * goes through the device's own helper, which tells network recovery. */
+#define ROAMING "/usr/libexec/unisoc-modem/roaming"
+
+static bool roaming_allowed(int slot)
+{
+    char command[64], out[8] = "";
+    snprintf(command, sizeof command, "uci -q get unisoc_modem.main.allow_roaming%d", slot);
+    FILE *p = popen(command, "r");
+    if (p) {
+        if (!fgets(out, sizeof out, p))
+            out[0] = 0;
+        pclose(p);
+    }
+    return out[0] == '1';
+}
+
 static void add_local_items(cJSON *items, const char *cat)
 {
     if (!strcmp(cat, "ui")) {
@@ -374,6 +391,20 @@ static void add_local_items(cJSON *items, const char *cat)
         if (at < cJSON_GetArraySize(items))
             at++;
         cJSON_InsertItemInArray(items, at, keys);
+    } else if (!strcmp(cat, "network") && !access(ROAMING, X_OK)) {
+        /* For the card the category controls, as its other per-SIM items are:
+         * the one picked, or the data SIM when it follows that. */
+        const char *control = jstr(cJSON_GetArrayItem(items, item_index(items, "control_slot")), "value");
+        int slot = control && (!strcmp(control, "0") || !strcmp(control, "1"))
+                       ? *control - '0'
+                       : (int)jnum_or(app.status, "modem.sim_card", 0);
+        char zh[64], en[64];
+        snprintf(zh, sizeof zh, "允许 SIM %d 在漫游时上网，可能产生额外费用", slot + 1);
+        snprintf(en, sizeof en, "SIM %d uses mobile data while roaming; charges may apply", slot + 1);
+        cJSON *roaming = local_item("roaming", "toggle", "数据漫游", "Data roaming", zh, en);
+        cJSON_AddBoolToObject(roaming, "value", roaming_allowed(slot));
+        cJSON_AddNumberToObject(roaming, "slot", slot);
+        cJSON_InsertItemInArray(items, item_index(items, "sim_radio0"), roaming);
     } else if (!strcmp(cat, "system")) {
         cJSON *restart = local_item("ui_restart", "action", "重启界面", "Restart the screen",
                                     "只重启信息屏界面，网络不受影响", "The screen only; the network stays up");
@@ -420,6 +451,18 @@ static void local_save(const cJSON *it, const cJSON *value)
         bool on = cJSON_IsTrue(value);
         screen_option_set("lock_keys", on ? "1" : "0");
         lock_set_keys(on);
+        cJSON_ReplaceItemInObject((cJSON *)it, "value", cJSON_CreateBool(on));
+        toast("%s", L("已保存", "Saved"));
+        render();
+        return;
+    }
+    if (!strcmp(id, "roaming")) {
+        bool on = cJSON_IsTrue(value);
+        char command[160];
+        snprintf(command, sizeof command,
+                 "echo '{\"slot\":\"%d\",\"enabled\":\"%d\"}' | " ROAMING " set >/dev/null 2>&1 &",
+                 (int)jnum_or(it, "slot", 0), on);
+        system(command);
         cJSON_ReplaceItemInObject((cJSON *)it, "value", cJSON_CreateBool(on));
         toast("%s", L("已保存", "Saved"));
         render();
