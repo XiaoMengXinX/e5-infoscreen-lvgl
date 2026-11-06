@@ -1019,12 +1019,14 @@ static void status_done(int status, cJSON *st, void *ctx)
         if (app.brightness <= 0)
             app.brightness = 120;
         backlight_send(app.blank ? 0 : app.brightness);
-    }
-    if (first)
         clock_tick(NULL);
+    }
     if (apply_screen())
         shell_rebuild();
     reconcile_power(app.status);
+    /* The idle time is known from the first status on. */
+    if (first)
+        idle_reset();
     render_status();
     sms_check(app.status);
     notifications(jget(app.status, "notifications"));
