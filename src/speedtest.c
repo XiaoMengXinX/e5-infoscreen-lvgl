@@ -222,6 +222,9 @@ static void paint(void)
     ui_set_text(ui.ip, *test.ip ? test.ip : "—");
     for (int i = 0; i < 2; i++)
         fit_info(ui.cells[i]);
+    /* The backend switches before a test only; once one has started, until the view
+     * opens again, the cell shows its server and neither a tap nor the keys reach it. */
+    lv_obj_set_state(ui.cells[1], LV_STATE_DISABLED, test.phase != IDLE);
     paint_gauge();
 }
 
@@ -517,8 +520,6 @@ static void on_backend(lv_event_t *e)
 
 static void on_server(lv_event_t *e)
 {
-    if (test.pid >= 0)
-        return;
     dialog_open(L("切换后端", "Switch backend"), NULL);
     for (int i = 0; i < BACKENDS; i++) {
         lv_obj_t *button = dialog_button(L(backends[i].zh, backends[i].en), on_backend, (void *)&backends[i]);
@@ -703,6 +704,9 @@ void speedtest_create(lv_obj_t *parent)
     ui.cells[0] = info(where, "user", &ui.isp, &ui.ip);
     /* The server cell, which shows the backend before a test, switches it. */
     lv_obj_t *server = ui.cells[1] = info(where, "globe", &ui.sponsor, &ui.place);
+    /* Centred to the pixel, the content still reads right of centre in the focus box;
+     * more room on the right draws it back. */
+    lv_obj_set_style_pad_right(server, S(12), 0);
     lv_obj_set_style_bg_color(server, theme.button, LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(server, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_set_clickable(server, true);

@@ -1119,7 +1119,8 @@ static int64_t focus_pos(lv_obj_t *obj)
     return (int64_t)a.y1 * 4096 + a.x1;
 }
 
-/* Focus moves in on-screen reading order within the visible page. */
+/* Focus moves in on-screen reading order within the visible page, past what is
+ * disabled as LVGL's own group order does. */
 static void focus_scan(lv_obj_t *parent, struct focus_scan *scan)
 {
     uint32_t count = lv_obj_get_child_count(parent);
@@ -1127,7 +1128,8 @@ static void focus_scan(lv_obj_t *parent, struct focus_scan *scan)
         lv_obj_t *child = lv_obj_get_child(parent, (int32_t)i);
         if (lv_obj_is_hidden(child))
             continue;
-        if (lv_obj_get_group(child) == scan->group && child != scan->current) {
+        if (lv_obj_get_group(child) == scan->group && child != scan->current &&
+            !lv_obj_has_state(child, LV_STATE_DISABLED)) {
             int64_t pos = focus_pos(child);
             bool ahead = scan->current ? (pos - scan->current_pos) * scan->dir > 0 : true;
             if (ahead && (!scan->best || (pos - scan->best_pos) * scan->dir < 0)) {
