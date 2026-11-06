@@ -34,6 +34,7 @@ struct view {
     bool warn, saving, loading, has_password;
     int slot;
     int32_t scroll;
+    char focus[96];
     char busy[64];
 };
 
@@ -48,7 +49,16 @@ static int32_t scroll_to = -1;
 static char row_keys[ROWS][96];
 static int row_count;
 static char armed[96], focused[96];
+static unsigned rendered;
 static lv_timer_t *disarm_timer, *bt_timer;
+
+/* The key of the focused row; rows keep their index plus one as user data. */
+static void focused_key(char *out, size_t size)
+{
+    lv_obj_t *was = lv_group_get_focused(lv_group_get_default());
+    intptr_t index = was && lv_obj_get_parent(was) == body ? (intptr_t)lv_obj_get_user_data(was) : 0;
+    snprintf(out, size, "%s", index > 0 && index <= row_count ? row_keys[index - 1] : "");
+}
 
 static const struct {
     const char *id, *icon;
@@ -127,13 +137,16 @@ static void release(struct view *v)
     memset(v, 0, sizeof *v);
 }
 
-/* A new view starts at the top; going back restores where the list was. */
+/* A new view starts at the top; going back restores where the list was and
+ * which row had the focus. */
 static struct view *push(enum kind kind, const char *title)
 {
     if (depth == DEPTH)
         release(&stack[--depth]);
-    if (depth && body)
+    if (depth && body) {
         stack[depth - 1].scroll = lv_obj_get_scroll_y(lv_obj_get_parent(body));
+        focused_key(stack[depth - 1].focus, sizeof stack[0].focus);
+    }
     scroll_to = 0;
     struct view *v = &stack[depth++];
     memset(v, 0, sizeof *v);
@@ -198,9 +211,12 @@ static lv_obj_t *row(const char *key, const char *icon, const char *label, const
     if (!(flags & ROW_INFO) && row_count < ROWS) {
         snprintf(row_keys[row_count], sizeof row_keys[0], "%s", key);
         lv_obj_add_event_cb(r, on_row, LV_EVENT_CLICKED, (void *)(intptr_t)row_count);
-        lv_obj_set_user_data(r, (void *)(intptr_t)row_count);
-        if (!strcmp(key, focused))
+        lv_obj_set_user_data(r, (void *)(intptr_t)(row_count + 1));
+        /* Rows take focus only from the keys, so a restored one is key focused. */
+        if (!strcmp(key, focused)) {
             lv_group_focus_obj(r);
+            lv_obj_add_state(r, LV_STATE_FOCUS_KEY);
+        }
         row_count++;
     }
     if (*armed && !strcmp(armed, key)) {
@@ -1333,9 +1349,11 @@ static void render(void)
     struct view *v = top();
     if (!v || !body)
         return;
-    lv_obj_t *was = lv_group_get_focused(lv_group_get_default());
-    if (was && lv_obj_get_parent(was) == body && lv_obj_get_user_data(was))
-        snprintf(focused, sizeof focused, "%s", row_keys[(intptr_t)lv_obj_get_user_data(was)]);
+    if (v->serial == rendered)
+        focused_key(focused, sizeof focused);
+    else
+        snprintf(focused, sizeof focused, "%s", v->focus);
+    rendered = v->serial;
     char crumb[512] = "";
     size_t len = 0;
     for (int i = 0; i < depth && len < sizeof crumb; i++)
