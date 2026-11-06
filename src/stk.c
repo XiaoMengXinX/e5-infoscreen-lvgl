@@ -73,10 +73,19 @@ static struct card {
     enum view view;
     uint32_t since, deadline, polled;
     char iccid[24], profile[80];
+    /* What the cache should hold, until the ICCID it is kept under is known. */
+    char menu_hex[600];
     int status_le;
+} cards[2];
+
+/* Card 1's URCs come on ring 0 and card 2's on ring 3, once the modem is in
+ * its dual-SIM channel mapping (AT+SMMSWAP=0, which Android's RIL sends at
+ * handshake); otherwise both come on ring 0 with nothing to tell them apart. */
+static struct ring_line {
     char line[1200];
     size_t len;
-} cards[2];
+} rings[2];
+static bool mapped;
 
 static struct {
     lv_obj_t *root, *switcher, *tabs[2], *body;
@@ -364,7 +373,6 @@ static void tohex(const uint8_t *b, int n, char *s)
         sprintf(s + 2 * i, "%02X", b[i]);
     s[2 * n] = 0;
 }
-
 
 /* ---------- AT, one command at a time ---------- */
 
@@ -734,18 +742,18 @@ static void cache_write(const struct card *k, const char *text)
     }
 }
 
-static void cache_save(const struct card *k, const uint8_t *b, int n)
+static void cache_save(struct card *k, const uint8_t *b, int n)
 {
-    char hex[600];
-    tohex(b, LV_MIN(n, 299), hex);
-    cache_write(k, hex);
+    tohex(b, LV_MIN(n, 299), k->menu_hex);
+    cache_write(k, k->menu_hex);
 }
 
 static void no_menu(struct card *k)
 {
     k->menu_known = false;
     k->no_menu = true;
-    cache_write(k, "none");
+    snprintf(k->menu_hex, sizeof k->menu_hex, "none");
+    cache_write(k, k->menu_hex);
 }
 
 /* ---------- URCs ---------- */
@@ -868,17 +876,32 @@ static void urc(int c, const char *line)
         render();
 }
 
+/* What came, for which card, and when: the boot's commands can only be read here. */
+static void log_urc(int c, const char *line)
+{
+    struct stat st;
+    if (!stat(SESSIONS ".log", &st) && st.st_size > 65536)
+        rename(SESSIONS ".log", SESSIONS ".log.old");
+    FILE *f = fopen(SESSIONS ".log", "a");
+    if (f) {
+        fprintf(f, "%u card%d %s\n", boot_ms() / 1000, c + 1, line);
+        fclose(f);
+    }
+}
+
 static void ring_data(int ring, const uint8_t *b, int n)
 {
-    int c = ring == 3;
-    struct card *k = &cards[c];
+    struct ring_line *r = &rings[ring == 3];
     for (int i = 0; i < n; i++) {
         if (b[i] == '\n') {
-            k->line[k->len] = 0;
-            urc(c, k->line);
-            k->len = 0;
-        } else if (b[i] != '\r' && k->len < sizeof k->line - 1) {
-            k->line[k->len++] = (char)b[i];
+            r->line[r->len] = 0;
+            int c = ring == 3;
+            if (strstr(r->line, "+SPUSAT"))
+                log_urc(c, r->line);
+            urc(c, r->line);
+            r->len = 0;
+        } else if (b[i] != '\r' && r->len < sizeof r->line - 1) {
+            r->line[r->len++] = (char)b[i];
         }
     }
 }
@@ -1003,8 +1026,8 @@ static bool trace_open(void)
         return false;
     }
     trace_len = 0;
-    for (int c = 0; c < 2; c++)
-        cards[c].len = 0;
+    for (int i = 0; i < 2; i++)
+        rings[i].len = 0;
     return true;
 }
 
@@ -1092,27 +1115,34 @@ static void on_iccid(int c, const char *reply)
         return;
     s += 6;
     sscanf(s + strspn(s, " \""), "%23[0-9A-Fa-f]", k->iccid);
-    if (k->menu_known || !*k->iccid)
+    if (*k->menu_hex)
+        cache_write(k, k->menu_hex);
+    if (k->menu_known || k->no_menu || !*k->iccid)
         return;
     cache_load(k);
-    if ((k->menu_known || k->no_menu) && k->view == V_LOADING) {
+    if (k->view != V_LOADING)
+        return;
+    if (k->menu_known || k->no_menu) {
         k->view = k->menu_known ? V_MENU : V_EMPTY;
         if (c == current)
             render();
+    } else {
+        k->since = lv_tick_get();
+        at_call(c, on_profile, "AT+SPUSATPROFILE?");
     }
 }
 
-/* The TE profile tells the modem which commands to forward; told the toolkit
- * runs, it replays the last one it forwarded, which is often the menu. */
+/* As Android shows the menu it was given at start, a card with a cached menu
+ * (or none) asks for nothing; one without asks the modem to replay its last
+ * command, which is often the menu, once its ICCID shows nothing is cached. */
 static void activate(int c)
 {
     struct card *k = &cards[c];
     k->view = k->menu_known ? V_MENU : k->no_menu ? V_EMPTY : V_LOADING;
     k->since = lv_tick_get();
     k->recovering = false;
-    at_call(c, on_iccid, "AT+CCID");
     at_send(c, "AT+CUSATW=0,\"%s\"", te_profile);
-    at_call(c, on_profile, "AT+SPUSATPROFILE?");
+    at_call(c, on_iccid, "AT+CCID");
 }
 
 /* ---------- time ---------- */
@@ -1163,10 +1193,15 @@ static void tick(lv_timer_t *t)
 {
     at_poll();
     trace_poll();
+    if (!mapped) {
+        mapped = true;
+        at_send(0, "AT+SMMSWAP=0");
+    }
     for (int c = 0; c < 2; c++) {
         expire(c);
         if (!cards[c].registered && present(c)) {
             cards[c].registered = true;
+            at_call(c, on_iccid, "AT+CCID");
             at_send(c, "AT+CUSATW=0,\"%s\"", te_profile);
             at_call(c, on_profile, "AT+SPUSATPROFILE?");
         }
