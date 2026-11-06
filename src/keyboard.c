@@ -28,7 +28,7 @@ static void build_maps(void)
         "z", "x", "c", "v", "b", "n", "m",
     };
     static const char *const symbols[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "/", ":", ";", "(",
-                                          ")", "¥", "&", "@", "\"", ".", ",", "?", "!", "'", "_", "#"};
+                                          ")", "$", "&", "@", "\"", ".", ",", "?", "!", "'", "_", "#"};
     for (int i = 0; i < 26; i++) {
         upper[i][0] = (char)toupper((unsigned char)letters[i][0]);
         upper[i][1] = 0;
