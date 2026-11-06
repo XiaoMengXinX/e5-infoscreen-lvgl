@@ -143,6 +143,9 @@ bool phone_keep_awake(void);
 void phone_screen_wake(void);
 void phone_calls(cJSON *event);
 
+/* pages/apps.c */
+void apps_open_toolkit(void);
+
 /* pages/settings.c */
 void settings_reset(void);
 void settings_open_category(const char *id, const char *title, const char *item);

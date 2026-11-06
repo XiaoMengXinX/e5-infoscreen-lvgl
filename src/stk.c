@@ -1,8 +1,8 @@
 /* SIM Toolkit. The modem forwards the SIM's proactive commands as
  * +SPUSATPROCMDIND URCs on each card's URC ring of the AT channel; ModemManager
  * owns that channel and drops them, so a return probe on sbuf_read copies the
- * rings out through a tracefs instance while the view is open or a session is
- * running. Answers go back through the AT owner, card by card.
+ * rings out through a tracefs instance for as long as the screen runs. Answers
+ * go back through the AT owner, card by card.
  *
  * As Android's STK app does, the main menu is kept and shown again (here also
  * across restarts, by ICCID), and a command left on screen gets
@@ -22,6 +22,7 @@
 #include <unistd.h>
 
 #include "app.h"
+#include "input.h"
 #include "keyboard.h"
 #include "theme.h"
 #include "ui.h"
@@ -34,18 +35,22 @@
 #define CACHE "/etc/e5-infoscreen/stk"
 #define SESSIONS "/tmp/e5-stk"
 #define ITEMS 32
-/* Android's StkApp.UI_TIMEOUT and DISP_TEXT_WAIT_FOR_USER_TIMEOUT. */
+/* Android's StkApp.UI_TIMEOUT, DISP_TEXT_WAIT_FOR_USER_TIMEOUT and
+ * DISP_TEXT_CLEAR_AFTER_DELAY_TIMEOUT. */
 #define UI_TIMEOUT 30000
 #define TEXT_TIMEOUT 60000
+#define TEXT_CLEAR_TIMEOUT 15000
 
 /* What the screen answers itself: menus, item lists, text, input and call setup.
  * The modem refuses a TE profile that claims what it handles on its own. */
 static const char te_profile[] = "08E09731610D005C6B00001F40000000032B0000000408000000000000000000";
 
-enum { CMD_SET_UP_CALL = 0x10, CMD_DISPLAY_TEXT = 0x21, CMD_GET_INKEY = 0x22, CMD_GET_INPUT = 0x23,
-       CMD_SELECT_ITEM = 0x24, CMD_SET_UP_MENU = 0x25 };
+enum { CMD_REFRESH = 0x01, CMD_SET_UP_EVENT_LIST = 0x05, CMD_PLAY_TONE = 0x20, CMD_DISPLAY_TEXT = 0x21,
+       CMD_GET_INKEY = 0x22, CMD_GET_INPUT = 0x23, CMD_SELECT_ITEM = 0x24, CMD_SET_UP_MENU = 0x25,
+       CMD_PROVIDE_LOCAL_INFO = 0x26, CMD_SET_UP_IDLE_MODE_TEXT = 0x28, CMD_LANGUAGE_NOTIFICATION = 0x35 };
 enum { RESULT_OK = 0x00, RESULT_BACK = 0x11, RESULT_NO_RESPONSE = 0x12, RESULT_UNSUPPORTED = 0x30 };
-enum view { V_LOADING, V_EMPTY, V_MENU, V_WAIT, V_SELECT, V_TEXT, V_INPUT, V_YESNO, V_CALL };
+/* V_EMPTY first: a card nobody has opened yet waits for nothing. */
+enum view { V_EMPTY, V_LOADING, V_MENU, V_WAIT, V_SELECT, V_TEXT, V_INPUT, V_YESNO, V_CALL };
 
 struct item {
     uint8_t id;
@@ -58,10 +63,12 @@ struct cmd {
     struct item items[ITEMS];
     int count, min, max;
     uint32_t duration;
+    uint8_t default_item;
+    bool immediate;
 };
 
 static struct card {
-    bool menu_known, pending, recovering;
+    bool menu_known, no_menu, pending, recovering, registered, auto_clear;
     struct cmd menu, cmd;
     enum view view;
     uint32_t since, deadline, polled;
@@ -72,12 +79,16 @@ static struct card {
 } cards[2];
 
 static struct {
-    lv_obj_t *root, *tabs[2], *body;
+    lv_obj_t *root, *switcher, *tabs[2], *body;
     lv_obj_t *field;
 } ui;
+/* Up from the first entry moves the keys onto the SIM switch, as in the dialer. */
+static bool on_switcher;
 
 static int current;
 static bool open_now;
+/* The card whose command the popup shows, or -1. */
+static int popup = -1;
 static int ring_dst = -1, ring_ch = -1;
 static int trace_fd = -1;
 static char trace_buf[8192];
@@ -321,6 +332,10 @@ static bool decode(const uint8_t *b, int n, struct cmd *m)
             m->max = v[1];
         } else if (tag == 0x17) {
             text_string(v, l, m->fill, sizeof m->fill);
+        } else if (tag == 0x10 && l >= 1) {
+            m->default_item = v[0];
+        } else if (tag == 0x2B) {
+            m->immediate = true;
         } else if (tag == 0x04 && l >= 2) {
             static const uint32_t unit[] = {60000, 1000, 100};
             m->duration = v[0] < 3 ? unit[v[0]] * v[1] : 0;
@@ -496,9 +511,19 @@ static bool session_read(int c, char *kind, uint32_t *since, char *hex, size_t s
     return ok;
 }
 
+static void popup_close(int c)
+{
+    if (popup != c)
+        return;
+    popup = -1;
+    if (dialog_is_open())
+        dialog_close();
+}
+
 static void settle(int c)
 {
     char path[32];
+    popup_close(c);
     cards[c].pending = false;
     session_path(c, path, sizeof path);
     unlink(path);
@@ -550,6 +575,118 @@ static void back_to_menu(int c)
         k->view = V_EMPTY;
 }
 
+/* ---------- what the user does, in the view or a popup ---------- */
+
+static void choose(int c, uint8_t id)
+{
+    struct card *k = &cards[c];
+    if (k->view == V_MENU) {
+        at_send(c, "AT+SPUSATENVECMD=\"D307820201819001%02X\"", id);
+        k->view = V_WAIT;
+        k->since = lv_tick_get();
+    } else {
+        uint8_t extra[] = {0x90, 1, id};
+        answer(c, RESULT_OK, extra, sizeof extra);
+    }
+}
+
+static void acknowledge(int c)
+{
+    if (cards[c].pending)
+        answer(c, RESULT_OK, NULL, 0);
+    else
+        back_to_menu(c);
+}
+
+static void yes_no(int c, bool yes)
+{
+    uint8_t extra[] = {0x8D, 2, 0x04, yes};
+    answer(c, RESULT_OK, extra, sizeof extra);
+}
+
+static void call_setup(int c, bool accept)
+{
+    struct card *k = &cards[c];
+    at_send(c, "AT+SPUSATCALLSETUP=%d", accept);
+    settle(c);
+    k->view = V_WAIT;
+    k->since = lv_tick_get();
+}
+
+/* False at the menu, where Back leaves the toolkit. */
+static bool go_back(int c)
+{
+    struct card *k = &cards[c];
+    switch (k->view) {
+    case V_SELECT:
+    case V_INPUT:
+    case V_YESNO:
+    case V_TEXT:
+        if (k->pending)
+            answer(c, RESULT_BACK, NULL, 0);
+        else
+            back_to_menu(c);
+        return true;
+    case V_CALL:
+        call_setup(c, false);
+        return true;
+    case V_WAIT:
+        back_to_menu(c);
+        return true;
+    default:
+        return false;
+    }
+}
+
+/* -1 is Cancel; otherwise the item id, or 1 and 0 for yes and no. */
+static void on_popup(lv_event_t *e)
+{
+    int c = popup, choice = (int)(intptr_t)lv_event_get_user_data(e);
+    if (c < 0)
+        return;
+    popup = -1;
+    dialog_close();
+    if (choice < 0)
+        go_back(c);
+    else if (cards[c].view == V_SELECT)
+        choose(c, (uint8_t)choice);
+    else if (cards[c].view == V_YESNO)
+        yes_no(c, choice);
+    else if (cards[c].view == V_CALL)
+        call_setup(c, true);
+    else
+        acknowledge(c);
+}
+
+static void show_popup(int c)
+{
+    const struct card *k = &cards[c];
+    char title[64];
+    if (*k->cmd.title)
+        snprintf(title, sizeof title, "%s", k->cmd.title);
+    else
+        snprintf(title, sizeof title, "SIM %d", c + 1);
+    const char *note = *k->cmd.text ? k->cmd.text
+                       : k->view == V_CALL ? L("SIM 卡请求拨打电话", "The SIM asks to make a call") : NULL;
+    dialog_open(title, note);
+    popup = c;
+    if (k->view == V_SELECT) {
+        for (int i = 0; i < k->cmd.count; i++)
+            dialog_button(k->cmd.items[i].text, on_popup, (void *)(intptr_t)k->cmd.items[i].id);
+        dialog_button(L("取消", "Cancel"), on_popup, (void *)-1);
+    } else if (k->view == V_YESNO) {
+        dialog_button(L("是", "Yes"), on_popup, (void *)1);
+        dialog_button(L("否", "No"), on_popup, (void *)0);
+    } else if (k->view == V_CALL) {
+        dialog_button(L("拨打", "Call"), on_popup, (void *)1);
+        dialog_button(L("取消", "Cancel"), on_popup, (void *)-1);
+    } else {
+        dialog_button(L("确定", "OK"), on_popup, (void *)0);
+        if (k->pending)
+            dialog_button(L("返回", "Back"), on_popup, (void *)-1);
+    }
+}
+
 /* ---------- the main menu, kept by ICCID ---------- */
 
 static void cache_path(const struct card *k, char *path, size_t size)
@@ -569,46 +706,75 @@ static void cache_load(struct card *k)
     hex[n] = 0;
     uint8_t b[300];
     struct cmd m;
+    k->no_menu = !strcmp(hex, "none");
     if (decode(b, unhex(hex, b, sizeof b), &m) && m.details[1] == CMD_SET_UP_MENU && m.count) {
         k->menu = m;
         k->menu_known = true;
     }
 }
 
-static void cache_save(const struct card *k, const uint8_t *b, int n)
+/* The menu's bytes in hex, or "none" for a card found to offer none. */
+static void cache_write(const struct card *k, const char *text)
 {
     if (!*k->iccid)
         return;
-    char path[96], hex[600], old[600] = "";
+    char path[96], old[600] = "";
     cache_path(k, path, sizeof path);
-    tohex(b, LV_MIN(n, 299), hex);
     FILE *f = fopen(path, "r");
     if (f) {
         old[fread(old, 1, sizeof old - 1, f)] = 0;
         fclose(f);
     }
-    if (!strcmp(old, hex))
+    if (!strcmp(old, text))
         return;
     mkdir(CACHE, 0755);
     if ((f = fopen(path, "w"))) {
-        fputs(hex, f);
+        fputs(text, f);
         fclose(f);
     }
 }
 
-static void cache_drop(const struct card *k)
+static void cache_save(const struct card *k, const uint8_t *b, int n)
 {
-    char path[96];
-    cache_path(k, path, sizeof path);
-    if (*k->iccid)
-        unlink(path);
+    char hex[600];
+    tohex(b, LV_MIN(n, 299), hex);
+    cache_write(k, hex);
+}
+
+static void no_menu(struct card *k)
+{
+    k->menu_known = false;
+    k->no_menu = true;
+    cache_write(k, "none");
 }
 
 /* ---------- URCs ---------- */
 
+/* A command the SIM sends while the toolkit is closed wakes the screen and
+ * pops up; one that needs typing opens the toolkit instead. Dismissed, it waits
+ * in the toolkit until its time runs out. */
+static void call_attention(int c)
+{
+    if (open_now) {
+        current = c;
+        return;
+    }
+    if (phone_call_active())
+        return;
+    if (app.blank)
+        screen_set_blank(false);
+    if (cards[c].view != V_INPUT) {
+        show_popup(c);
+    } else if (!lock_active()) {
+        current = c;
+        apps_open_toolkit();
+    }
+}
+
 static void show_command(struct card *k)
 {
     uint8_t type = k->cmd.details[1];
+    k->auto_clear = false;
     k->view = type == CMD_SELECT_ITEM ? V_SELECT
               : type == CMD_DISPLAY_TEXT ? V_TEXT
               : type == CMD_GET_INKEY && (k->cmd.details[2] & 0x04) ? V_YESNO : V_INPUT;
@@ -633,11 +799,12 @@ static void command(int c, const uint8_t *b, int n)
     if (type == CMD_SET_UP_MENU) {
         k->menu = m;
         k->menu_known = m.count > 0;
+        k->no_menu = !k->menu_known;
         k->recovering = false;
         if (k->menu_known)
             cache_save(k, b, n);
         else
-            cache_drop(k);
+            no_menu(k);
         respond(c, m.details, RESULT_OK, NULL, 0);
         if (k->view == V_LOADING || k->view == V_EMPTY || k->view == V_MENU)
             k->view = k->menu_known ? V_MENU : V_EMPTY;
@@ -645,13 +812,25 @@ static void command(int c, const uint8_t *b, int n)
                type == CMD_DISPLAY_TEXT) {
         k->cmd = m;
         show_command(k);
-        /* Text that clears by itself is acknowledged at once and stays until OK. */
-        if (type == CMD_DISPLAY_TEXT && !(qualifier & 0x80)) {
+        /* Text that clears by itself, or asks for an immediate response, is
+         * acknowledged at once; the first kind also goes away by itself. */
+        if (type == CMD_DISPLAY_TEXT && (!(qualifier & 0x80) || m.immediate)) {
             settle(c);
             respond(c, m.details, RESULT_OK, NULL, 0);
+            k->auto_clear = !(qualifier & 0x80);
+            k->since = lv_tick_get();
         } else {
             wait_for_user(c, 'P', b, n);
         }
+        call_attention(c);
+    } else if (type == CMD_PLAY_TONE || type == CMD_SET_UP_IDLE_MODE_TEXT || type == CMD_LANGUAGE_NOTIFICATION ||
+               type == CMD_SET_UP_EVENT_LIST || type == CMD_REFRESH) {
+        respond(c, m.details, RESULT_OK, NULL, 0);
+        if (type == CMD_PLAY_TONE && *m.title)
+            toast("%s", m.title);
+    } else if (type == CMD_PROVIDE_LOCAL_INFO && qualifier == 0x04) {
+        uint8_t language[] = {0x2D, 2, app.en ? 'e' : 'z', app.en ? 'n' : 'h'};
+        respond(c, m.details, RESULT_OK, language, sizeof language);
     } else {
         respond(c, m.details, RESULT_UNSUPPORTED, NULL, 0);
     }
@@ -673,6 +852,7 @@ static void urc(int c, const char *line)
         if (decode(b, n, &k->cmd)) {
             wait_for_user(c, 'C', b, n);
             k->view = V_CALL;
+            call_attention(c);
         }
     } else if ((data = strstr(line, "+SPUSATDISPLAY:"))) {
         struct cmd m;
@@ -915,8 +1095,8 @@ static void on_iccid(int c, const char *reply)
     if (k->menu_known || !*k->iccid)
         return;
     cache_load(k);
-    if (k->menu_known && k->view == V_LOADING) {
-        k->view = V_MENU;
+    if ((k->menu_known || k->no_menu) && k->view == V_LOADING) {
+        k->view = k->menu_known ? V_MENU : V_EMPTY;
         if (c == current)
             render();
     }
@@ -927,7 +1107,7 @@ static void on_iccid(int c, const char *reply)
 static void activate(int c)
 {
     struct card *k = &cards[c];
-    k->view = k->menu_known ? V_MENU : V_LOADING;
+    k->view = k->menu_known ? V_MENU : k->no_menu ? V_EMPTY : V_LOADING;
     k->since = lv_tick_get();
     k->recovering = false;
     at_call(c, on_iccid, "AT+CCID");
@@ -939,7 +1119,7 @@ static void activate(int c)
 
 static bool in_session(const struct card *k)
 {
-    return k->pending || k->view == V_WAIT;
+    return k->pending || k->view == V_WAIT || k->view == V_TEXT;
 }
 
 static void expire(int c)
@@ -955,10 +1135,13 @@ static void expire(int c)
         }
     } else if (k->view == V_WAIT && idle > UI_TIMEOUT) {
         back_to_menu(c);
+    } else if (k->view == V_TEXT && k->auto_clear && idle > (k->cmd.duration ? k->cmd.duration : TEXT_CLEAR_TIMEOUT)) {
+        back_to_menu(c);
     } else if (k->view == V_LOADING && !k->recovering && idle > 3000) {
         recover(c);
     } else if (k->view == V_LOADING && k->recovering && idle > 20000) {
         k->recovering = false;
+        no_menu(k);
         k->view = V_EMPTY;
     } else {
         if (k->recovering && !at.count && lv_tick_elaps(k->polled) > 2000) {
@@ -971,21 +1154,24 @@ static void expire(int c)
         render();
 }
 
+static bool present(int c);
+
+/* The modem forwards nothing until told which commands the screen takes, and
+ * holds what came before (a welcome text at SIM start) until told the toolkit
+ * runs, as Android's RIL tells it at boot: each card present, once per run. */
 static void tick(lv_timer_t *t)
 {
     at_poll();
     trace_poll();
-    bool needed = open_now;
     for (int c = 0; c < 2; c++) {
         expire(c);
-        needed |= in_session(&cards[c]) || cards[c].recovering;
+        if (!cards[c].registered && present(c)) {
+            cards[c].registered = true;
+            at_send(c, "AT+CUSATW=0,\"%s\"", te_profile);
+            at_call(c, on_profile, "AT+SPUSATPROFILE?");
+        }
     }
-    if (!needed && trace_fd >= 0)
-        trace_close();
-    if (!needed && at.pid < 0 && !at.count) {
-        lv_timer_delete(t);
-        ticker = NULL;
-    }
+    lv_timer_set_period(t, at.pid >= 0 || open_now ? 50 : 250);
 }
 
 /* ---------- view ---------- */
@@ -1005,18 +1191,75 @@ static void on_tab(lv_event_t *e)
     render();
 }
 
+static bool inside(lv_obj_t *obj, lv_obj_t *parent)
+{
+    while (obj && obj != parent)
+        obj = lv_obj_get_parent(obj);
+    return obj != NULL;
+}
+
+static lv_obj_t *first_entry(lv_obj_t *parent)
+{
+    for (uint32_t i = 0; i < lv_obj_get_child_count(parent); i++) {
+        lv_obj_t *child = lv_obj_get_child(parent, (int32_t)i);
+        if (lv_obj_is_hidden(child))
+            continue;
+        if (lv_obj_get_group(child) == input_group())
+            return child;
+        if ((child = first_entry(child)))
+            return child;
+    }
+    return NULL;
+}
+
+/* Left and Right only switch the card, on the switch; elsewhere they would
+ * change the page in the middle of a SIM session. */
+bool stk_key(const struct key_event *key)
+{
+    bool dual = present(0) && present(1);
+    switch (key->kind) {
+    case KEY_KIND_LEFT:
+    case KEY_KIND_RIGHT:
+        if (on_switcher && current != (key->kind == KEY_KIND_RIGHT)) {
+            current = key->kind == KEY_KIND_RIGHT;
+            render();
+        }
+        return true;
+    case KEY_KIND_UP: {
+        lv_obj_t *focused = lv_group_get_focused(input_group());
+        if (on_switcher)
+            return true;
+        bool below_first = focused && lv_obj_has_state(focused, LV_STATE_FOCUS_KEY) && inside(focused, ui.body) &&
+                           focused != first_entry(ui.body);
+        if (!dual || below_first)
+            return false;
+        input_defocus();
+        on_switcher = true;
+        render();
+        return true;
+    }
+    case KEY_KIND_DOWN: {
+        if (!on_switcher)
+            return false;
+        on_switcher = false;
+        render();
+        lv_obj_t *first = first_entry(ui.body);
+        if (first) {
+            lv_group_focus_obj(first);
+            lv_obj_add_state(first, LV_STATE_FOCUS_KEY);
+        }
+        return true;
+    }
+    case KEY_KIND_OK:
+        return on_switcher;
+    default:
+        return false;
+    }
+}
+
 static void on_item(lv_event_t *e)
 {
-    struct card *k = &cards[current];
-    uint8_t id = (uint8_t)(uintptr_t)lv_event_get_user_data(e);
-    if (k->view == V_MENU) {
-        at_send(current, "AT+SPUSATENVECMD=\"D307820201819001%02X\"", id);
-        k->view = V_WAIT;
-        k->since = lv_tick_get();
-    } else {
-        uint8_t extra[] = {0x90, 1, id};
-        answer(current, RESULT_OK, extra, sizeof extra);
-    }
+    choose(current, (uint8_t)(uintptr_t)lv_event_get_user_data(e));
     render();
 }
 
@@ -1040,28 +1283,21 @@ static void on_ok(lv_event_t *e)
         uint8_t extra[300];
         int n = answer_text(text, k->cmd.details[2], extra, sizeof extra);
         answer(current, RESULT_OK, extra, n);
-    } else if (k->pending) {
-        answer(current, RESULT_OK, NULL, 0);
     } else {
-        back_to_menu(current);
+        acknowledge(current);
     }
     render();
 }
 
 static void on_yesno(lv_event_t *e)
 {
-    uint8_t extra[] = {0x8D, 2, 0x04, (uint8_t)(uintptr_t)lv_event_get_user_data(e)};
-    answer(current, RESULT_OK, extra, sizeof extra);
+    yes_no(current, lv_event_get_user_data(e) != NULL);
     render();
 }
 
 static void on_call(lv_event_t *e)
 {
-    struct card *k = &cards[current];
-    at_send(current, "AT+SPUSATCALLSETUP=%d", (int)(intptr_t)lv_event_get_user_data(e));
-    settle(current);
-    k->view = V_WAIT;
-    k->since = lv_tick_get();
+    call_setup(current, lv_event_get_user_data(e) != NULL);
     render();
 }
 
@@ -1097,10 +1333,12 @@ static void render(void)
         return;
     struct card *k = &cards[current];
     bool dual = present(0) && present(1);
-    lv_obj_set_hidden(lv_obj_get_parent(ui.tabs[0]), !dual);
+    on_switcher &= dual;
+    lv_obj_set_hidden(ui.switcher, !dual);
     for (int c = 0; c < 2; c++) {
-        lv_obj_set_style_bg_color(ui.tabs[c], c == current ? theme.accent : theme.button, 0);
-        lv_obj_set_style_text_color(lv_obj_get_child(ui.tabs[c], 0), c == current ? theme.bg : theme.text, 0);
+        lv_obj_set_style_bg_opa(ui.tabs[c], c == current ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_state(ui.tabs[c], LV_STATE_FOCUS_KEY, on_switcher && c == current);
+        lv_obj_set_style_text_color(lv_obj_get_child(ui.tabs[c], 0), c == current ? theme.accent : theme.dim, 0);
     }
     keyboard_close();
     lv_obj_clean(ui.body);
@@ -1122,8 +1360,14 @@ static void render(void)
         break;
     case V_MENU:
     case V_SELECT:
-        for (int i = 0; i < m->count; i++)
-            ui_row(ui.body, NULL, m->items[i].text, NULL, ROW_CHEVRON, on_item, (void *)(uintptr_t)m->items[i].id);
+        for (int i = 0; i < m->count; i++) {
+            lv_obj_t *row = ui_row(ui.body, NULL, m->items[i].text, NULL, ROW_CHEVRON, on_item,
+                                   (void *)(uintptr_t)m->items[i].id);
+            if (k->view == V_SELECT && m->default_item && m->items[i].id == m->default_item) {
+                lv_group_focus_obj(row);
+                lv_obj_add_state(row, LV_STATE_FOCUS_KEY);
+            }
+        }
         break;
     case V_TEXT:
         message(m->text);
@@ -1174,7 +1418,7 @@ static void session_restore(int c)
     uint32_t since;
     uint8_t b[300];
     if (!session_read(c, &kind, &since, hex, sizeof hex) || !decode(b, unhex(hex, b, sizeof b), &k->cmd) ||
-        !trace_open()) {
+        trace_fd < 0) {
         settle(c);
         return;
     }
@@ -1184,19 +1428,30 @@ static void session_restore(int c)
         show_command(k);
     k->pending = true;
     k->since = lv_tick_get() - (boot_ms() - since);
-    ticking();
 }
 
 void stk_create(lv_obj_t *parent)
 {
     memset(&ui, 0, sizeof ui);
     ui.root = ui_box(parent, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
-    lv_obj_t *tabs = ui_box(ui.root, LV_FLEX_FLOW_ROW, 8);
+    /* The phone dialer's SIM switch; Left and Right pick the card. */
+    lv_obj_t *tabs = ui.switcher = ui_box(ui.root, LV_FLEX_FLOW_ROW, 0);
+    lv_obj_set_style_bg_color(tabs, theme.surface, 0);
+    lv_obj_set_style_bg_opa(tabs, theme.surface_opa, 0);
+    lv_obj_set_style_radius(tabs, S(18), 0);
+    lv_obj_set_style_pad_all(tabs, S(3), 0);
     for (int c = 0; c < 2; c++) {
         ui.tabs[c] = ui_button(tabs, c ? "SIM 2" : "SIM 1", on_tab, (void *)(intptr_t)c);
+        lv_group_remove_obj(ui.tabs[c]);
         lv_obj_set_flex_grow(ui.tabs[c], 1);
+        lv_obj_set_style_pad_ver(ui.tabs[c], S(5), 0);
+        lv_obj_set_style_radius(ui.tabs[c], S(15), 0);
+        lv_obj_set_style_bg_color(ui.tabs[c], theme.active, 0);
+        lv_obj_set_style_text_font(lv_obj_get_child(ui.tabs[c], 0), F(12), 0);
     }
     ui.body = ui_box(ui.root, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
+    ticking();
+    trace_open();
     for (int c = 0; c < 2; c++)
         if (!in_session(&cards[c]))
             session_restore(c);
@@ -1206,7 +1461,10 @@ void stk_create(lv_obj_t *parent)
 /* A session left open resumes where it was, as long as its time has not run out. */
 void stk_open(void)
 {
+    if (popup >= 0)
+        popup_close(popup);
     open_now = true;
+    on_switcher = false;
     ticking();
     if (!trace_open()) {
         for (int c = 0; c < 2; c++)
@@ -1236,27 +1494,8 @@ void stk_close(void)
 
 bool stk_back(void)
 {
-    struct card *k = &cards[current];
-    switch (k->view) {
-    case V_SELECT:
-    case V_INPUT:
-    case V_YESNO:
-    case V_TEXT:
-        if (k->pending)
-            answer(current, RESULT_BACK, NULL, 0);
-        else
-            back_to_menu(current);
-        break;
-    case V_CALL:
-        at_send(current, "AT+SPUSATCALLSETUP=0");
-        back_to_menu(current);
-        break;
-    case V_WAIT:
-        back_to_menu(current);
-        break;
-    default:
+    if (!go_back(current))
         return false;
-    }
     render();
     return true;
 }

@@ -44,6 +44,9 @@ void dialog_open(const char *title, const char *note)
     lv_obj_add_event_cb(root, on_backdrop, LV_EVENT_CLICKED, NULL);
     sheet = ui_box(root, LV_FLEX_FLOW_COLUMN, 8);
     lv_obj_center(sheet);
+    lv_obj_set_style_max_height(sheet, LV_PCT(100), 0);
+    lv_obj_set_scrollable(sheet, true);
+    lv_obj_set_scroll_dir(sheet, LV_DIR_VER);
     lv_obj_set_clickable(sheet, true);
     lv_obj_set_style_bg_color(sheet, theme.bg, 0);
     lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
