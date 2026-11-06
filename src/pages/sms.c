@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "api.h"
@@ -37,18 +38,53 @@ static bool id_in(const cJSON *array, double id)
     return false;
 }
 
+/* The sender's offset is in the time; it is shown in the screen's own. */
 static void sms_time(const char *ts, char *out, size_t size)
 {
-    int y, mo, d, h, mi;
-    if (!ts || sscanf(ts, "%4d-%2d-%2dT%2d:%2d", &y, &mo, &d, &h, &mi) != 5) {
+    double epoch;
+    if (!iso_epoch(ts, &epoch)) {
         snprintf(out, size, "%s", "");
         return;
     }
-    struct local_time now = local_now();
-    if (now.year == y && now.month == mo && now.day == d)
-        snprintf(out, size, "%02d:%02d", h, mi);
+    struct local_time t = local_at(epoch), now = local_now();
+    if (now.year == t.year && now.month == t.month && now.day == t.day)
+        snprintf(out, size, "%02d:%02d", t.hour, t.minute);
     else
-        snprintf(out, size, "%02d-%02d %02d:%02d", mo, d, h, mi);
+        snprintf(out, size, "%02d-%02d %02d:%02d", t.month, t.day, t.hour, t.minute);
+}
+
+struct dated {
+    cJSON *message;
+    double epoch;
+    int order;
+};
+
+static int newest_first(const void *a, const void *b)
+{
+    const struct dated *x = a, *y = b;
+    if (x->epoch != y->epoch)
+        return x->epoch < y->epoch ? 1 : -1;
+    return x->order - y->order;
+}
+
+/* The backend orders by the time as text, which puts a message sent at another
+ * offset in the wrong place; order by the instant instead, ties as they came. */
+static void order_messages(void)
+{
+    int n = cJSON_GetArraySize(messages);
+    struct dated *list = calloc((size_t)n, sizeof *list);
+    if (!list)
+        return;
+    for (int i = 0; i < n; i++) {
+        list[i].message = cJSON_DetachItemFromArray(messages, 0);
+        list[i].order = i;
+        if (!iso_epoch(jstr(list[i].message, "time"), &list[i].epoch))
+            list[i].epoch = 0;
+    }
+    qsort(list, (size_t)n, sizeof *list, newest_first);
+    for (int i = 0; i < n; i++)
+        cJSON_AddItemToArray(messages, list[i].message);
+    free(list);
 }
 
 static void meta(const cJSON *m, char *out, size_t size)
@@ -232,6 +268,7 @@ static void loaded(int status, cJSON *r, void *ctx)
         messages = cJSON_Duplicate(jget(r, "messages"), true);
         if (!messages)
             messages = cJSON_CreateArray();
+        order_messages();
         if (open_id < 0)
             render_list();
     }

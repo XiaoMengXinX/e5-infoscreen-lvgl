@@ -42,3 +42,5 @@ struct local_time {
 };
 struct local_time local_now(void);
 struct local_time local_at(double epoch);
+/* "2026-11-07T00:38:00+00:00" (or Z, or no offset for UTC) to seconds since the epoch. */
+bool iso_epoch(const char *iso, double *epoch);

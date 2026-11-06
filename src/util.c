@@ -268,6 +268,30 @@ struct local_time local_at(double epoch)
     return (struct local_time){tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec};
 }
 
+bool iso_epoch(const char *iso, double *epoch)
+{
+    int y, mo, d, h, mi, s = 0, n = 0, oh = 0, om = 0;
+    char sign = 0;
+    if (!iso || sscanf(iso, "%4d-%2d-%2dT%2d:%2d%n", &y, &mo, &d, &h, &mi, &n) != 5)
+        return false;
+    const char *rest = iso + n;
+    int used = 0;
+    if (sscanf(rest, ":%2d%n", &s, &used) == 1)
+        rest += used;
+    while (*rest == '.' || (*rest >= '0' && *rest <= '9'))
+        rest++;
+    if ((*rest == '+' || *rest == '-') && sscanf(rest + 1, "%2d:%2d", &oh, &om) >= 1)
+        sign = *rest;
+    /* Days since 1970-01-01 by the civil calendar (Howard Hinnant's days_from_civil). */
+    int yy = mo <= 2 ? y - 1 : y;
+    int era = (yy >= 0 ? yy : yy - 399) / 400;
+    int yoe = yy - era * 400, doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    long days = (long)era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
+    int offset = (oh * 60 + om) * 60 * (sign == '-' ? -1 : 1);
+    *epoch = (double)days * 86400 + h * 3600 + mi * 60 + s - (sign ? offset : 0);
+    return true;
+}
+
 struct local_time local_now(void)
 {
     return local_at((double)time(NULL));
