@@ -116,6 +116,9 @@ int shell_status_bar_height(void)
 
 /* ---------- small drawn indicators ---------- */
 
+/* The second SIM's row: four flat bars. */
+#define BARS_FLAT_H 3
+
 static void bars_draw(lv_event_t *e)
 {
     lv_obj_t *obj = lv_event_get_target_obj(e);
@@ -129,7 +132,7 @@ static void bars_draw(lv_event_t *e)
     dsc.bg_color = lv_obj_get_style_text_color(obj, 0);
     dsc.radius = 1;
     for (int i = 0; i < 4; i++) {
-        int32_t bh = h * heights[i] / 100;
+        int32_t bh = h <= BARS_FLAT_H ? h : h * heights[i] / 100;
         lv_area_t r = {a.x1 + i * (bar + 1), a.y2 - bh + 1, a.x1 + i * (bar + 1) + bar - 1, a.y2};
         dsc.bg_opa = i < on ? LV_OPA_COVER : LV_OPA_20;
         lv_draw_rect(lv_event_get_layer(e), &dsc, &r);
@@ -770,7 +773,7 @@ static void render_bar(const cJSON *st)
         int primary = (int)jnum_or(m, "sim_card", 0);
         for (int slot = 0; slot < 2; slot++) {
             bars_set(ui.bar_dual[slot], signal_bars(sim_slot(st, slot)));
-            lv_obj_set_height(ui.bar_dual[slot], slot == primary ? 10 : 4);
+            lv_obj_set_height(ui.bar_dual[slot], slot == primary ? 9 : BARS_FLAT_H);
             lv_obj_move_to_index(ui.bar_dual[slot], slot == primary ? 0 : 1);
         }
     } else {
@@ -1467,11 +1470,11 @@ static void build_bar(void)
     ui.bar_bars = bars_create(ui.bar, 15, 11);
     lv_obj_t *dual = lv_obj_create(ui.bar);
     lv_obj_remove_style_all(dual);
-    lv_obj_set_size(dual, 15, 15);
+    lv_obj_set_size(dual, 15, 13);
     lv_obj_set_flex_flow(dual, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_gap(dual, 1, 0);
     for (int i = 0; i < 2; i++)
-        ui.bar_dual[i] = bars_create(dual, 15, 10);
+        ui.bar_dual[i] = bars_create(dual, 15, 9);
     lv_obj_set_hidden(dual, true);
     ui.bar_bat = lv_obj_create(ui.bar);
     lv_obj_remove_style_all(ui.bar_bat);
