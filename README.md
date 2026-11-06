@@ -1,6 +1,6 @@
 # 信息屏 LVGL 界面
 
-[e5-linux](https://github.com/XiaoMengXinX/e5-linux) 中 `devices/common/infoscreen/` 屏幕界面的原生实现：基于 LVGL 9.6 的单个静态程序，
+[e5-linux](https://github.com/sprd-linux-devs/e5-linux) 中 `devices/common/infoscreen/` 屏幕界面的原生实现：基于 LVGL 9.6 的单个静态程序，
 通过 DRM（`/dev/dri/card0`，双缓冲、vblank 翻页）显示，从 evdev 读取触摸和按键，用 FreeType 渲染 Noto Sans CJK SC。
 
 数据和操作来自 `api.uc`（`127.0.0.1:8088/api`）及来电事件流（`127.0.0.1:8089/events`），

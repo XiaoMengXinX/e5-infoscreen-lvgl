@@ -20,7 +20,7 @@ jobs:
       # build.py reads the backend's error translations from e5-linux next to this repository.
       - uses: actions/checkout@v4
         with:
-          repository: XiaoMengXinX/e5-linux
+          repository: sprd-linux-devs/e5-linux
           path: e5-linux
           sparse-checkout: openwrt/luci-app-t551m/htdocs/luci-static/resources/mu300/common.js
           sparse-checkout-cone-mode: false
