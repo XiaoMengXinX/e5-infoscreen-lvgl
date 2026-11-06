@@ -106,7 +106,7 @@ void lock_status(const cJSON *st);
 void lock_clock(void);
 void lock_power(bool blank);
 bool lock_key(const struct key_event *key);
-/* Every key press and release, for the * and # unlock. */
+/* Every key press and release, for the * and # hold and the double OK unlock. */
 void lock_key_held(const struct key_event *key);
 /* The * and # unlock's setting, which the screen keeps itself (UCI lock_keys). */
 bool lock_keys_enabled(void);

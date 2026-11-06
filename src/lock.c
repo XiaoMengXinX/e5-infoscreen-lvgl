@@ -173,12 +173,13 @@ static void unlock_done(lv_anim_t *a)
 }
 
 static void unlock(float velocity);
+static void apply_config(void);
 
 /* Holding * and # for a second, and no other key, unlocks, unless the setting turns
  * it off. */
 static bool keys_on = true;
 static struct {
-    bool star, pound;
+    bool star, pound, ok, ok_alone;
     int others;
     lv_timer_t *timer;
 } hold;
@@ -192,7 +193,7 @@ static void hold_done(lv_timer_t *t)
 
 static void hold_reset(void)
 {
-    hold.star = hold.pound = false;
+    hold.star = hold.pound = hold.ok = hold.ok_alone = false;
     hold.others = 0;
     if (hold.timer)
         lv_timer_delete(hold.timer);
@@ -203,13 +204,39 @@ void lock_key_held(const struct key_event *key)
 {
     if (key->repeat)
         return;
-    if (key->kind == KEY_KIND_CHAR && key->ch == '*')
+    bool ok = key->kind == KEY_KIND_OK;
+    if (ok && key->down) {
+        /* With touch off, OK pressed twice unlocks: each press counts only on
+         * its release, and only if no other key was down at any point of it.
+         * Any other key in between starts the count over. */
+        hold.ok_alone = locked && !dark && jfalse(screen_config(), "touch") && lv_tick_elaps(wake_at) >= 400 &&
+                        !hold.star && !hold.pound && !hold.others;
+    } else if (ok) {
+        if (hold.ok_alone && locked && !dark) {
+            if (key_armed && lv_tick_elaps(key_armed) < 1800) {
+                unlock(0);
+            } else {
+                key_armed = lv_tick_get();
+                ui_set_text(ui.hint, L("再按一次确认键解锁", "Press OK again"));
+            }
+        }
+        hold.ok_alone = false;
+    } else if (key->down) {
+        hold.ok_alone = false;
+        if (key_armed) {
+            key_armed = 0;
+            apply_config();
+        }
+    }
+    if (ok)
+        hold.ok = key->down;
+    else if (key->kind == KEY_KIND_CHAR && key->ch == '*')
         hold.star = key->down;
     else if (key->kind == KEY_KIND_CHAR && key->ch == '#')
         hold.pound = key->down;
     else
         hold.others = key->down ? hold.others + 1 : LV_MAX(hold.others - 1, 0);
-    bool both = locked && !dark && hold.star && hold.pound && !hold.others && keys_on;
+    bool both = locked && !dark && hold.star && hold.pound && !hold.ok && !hold.others && keys_on;
     if (both && !hold.timer) {
         hold.timer = lv_timer_create(hold_done, 1000, NULL);
         lv_timer_set_repeat_count(hold.timer, 1);
@@ -560,15 +587,5 @@ void lock_status(const cJSON *st)
 
 bool lock_key(const struct key_event *key)
 {
-    if (!locked || dark)
-        return false;
-    if (jfalse(screen_config(), "touch") && key->kind == KEY_KIND_OK && !key->repeat && lv_tick_elaps(wake_at) >= 400) {
-        if (key_armed && lv_tick_elaps(key_armed) < 1800) {
-            unlock(0);
-        } else {
-            key_armed = lv_tick_get();
-            ui_set_text(ui.hint, L("再按一次确认键解锁", "Press OK again"));
-        }
-    }
-    return true;
+    return locked && !dark;
 }
