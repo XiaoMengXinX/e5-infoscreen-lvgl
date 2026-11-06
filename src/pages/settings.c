@@ -267,11 +267,11 @@ static void value_text(const cJSON *it, char *out, size_t size)
         snprintf(out, size, "%s", *v ? v : "--");
     } else if (!strcmp(type, "number")) {
         if (cJSON_IsNumber(value))
-            snprintf(out, size, "%g%s", value->valuedouble, jstr(it, "unit") ? jstr(it, "unit") : "");
+            snprintf(out, size, "%g%s", value->valuedouble, jstr_or(it, "unit", ""));
         else
             snprintf(out, size, "--");
     } else if (!strcmp(type, "multi")) {
-        if (jget(it, "display_value") && !cJSON_IsNull(jget(it, "display_value"))) {
+        if (jhas(it, "display_value")) {
             label_text(jget(it, "display_value"), out, size);
         } else if (!cJSON_GetArraySize(value)) {
             label_text(jget(it, "none_label"), out, size);
@@ -304,10 +304,11 @@ static void value_text(const cJSON *it, char *out, size_t size)
 
 static void categories_loaded(int status, cJSON *r, void *ctx)
 {
+    bool ok = api_read_ok(status, r);
     categories_busy = false;
     shell_page_loading(PAGE_SETTINGS, false);
-    shell_page_error(PAGE_SETTINGS, !api_read_ok(status, r));
-    if (api_read_ok(status, r)) {
+    shell_page_error(PAGE_SETTINGS, !ok);
+    if (ok) {
         cJSON_Delete(categories);
         categories = cJSON_Duplicate(jget(r, "categories"), true);
     }
@@ -331,8 +332,7 @@ static char open_item[64];
 
 /* ---------- the screen's own items ---------- */
 
-/* Items the screen handles itself, added to the backend's categories, so a device
- * has them whatever backend it runs. They carry "local" and never reach the API. */
+/* Items the screen handles itself; "local" keeps them away from the API. */
 #define TOUCH_DRIVER "/sys/bus/i2c/drivers/lym10k-touch"
 
 static cJSON *local_item(const char *id, const char *type, const char *zh, const char *en, const char *note_zh,
@@ -357,7 +357,7 @@ static int item_index(const cJSON *items, const char *id)
     int i = 0;
     const cJSON *it;
     cJSON_ArrayForEach(it, items) {
-        if (jstr(it, "id") && !strcmp(jstr(it, "id"), id))
+        if (jstr_is(it, "id", id))
             return i;
         i++;
     }
@@ -433,7 +433,6 @@ static void local_save(const cJSON *it, const cJSON *value)
     system("/etc/init.d/e5-infoscreen restart >/dev/null 2>&1 &");
 }
 
-/* Loaded into v->data: the category's items, a list, or a whole document. */
 static void data_loaded(int status, cJSON *r, void *ctx)
 {
     shell_page_loading(PAGE_SETTINGS, false);
@@ -566,7 +565,7 @@ static void post_finish(struct post *p, const cJSON *r)
         toast("%s", L("设置已保存，模组未就绪或射频已关闭，已跳过重连", "Settings saved; modem not ready or radio off, reconnect skipped"));
     else if (reconnect && !strcmp(reconnect, "failed"))
         toast("%s", L("设置已接受，但重连失败", "Settings accepted, but reconnect failed"));
-    else if (jget(r, "refresh_error") && !cJSON_IsNull(jget(r, "refresh_error")) && !cJSON_IsFalse(jget(r, "refresh_error")))
+    else if (jhas(r, "refresh_error") && !cJSON_IsFalse(jget(r, "refresh_error")))
         toast("%s", L("设置已应用，请稍后刷新状态", "Settings applied; refresh status later"));
     else if (v && !strcmp(v->cat, "usb") && !strcmp(p->id, "reset"))
         toast("%s", L("USB 修复已启动", "USB recovery started"));
@@ -596,7 +595,7 @@ static void post_finish(struct post *p, const cJSON *r)
         lv_timer_set_repeat_count(lv_timer_create(usb_refresh, 2000, (void *)(uintptr_t)v->serial), 1);
     if (ok && v && (!strcmp(v->cat, "screen") || !strcmp(v->cat, "ui") || !strcmp(v->cat, "navigation") ||
                     (!strcmp(v->cat, "system") && !strcmp(p->id, "clock_seconds"))))
-        screen_applied(p->id, jget(item, "value") ? jget(item, "value") : p->value);
+        screen_applied(p->id, jget_or(item, "value", p->value));
     struct view *t = top();
     if (ok && t && t->kind == V_EDIT && t != v && find(p->serial) == &stack[depth - 2])
         pop();
@@ -612,7 +611,7 @@ static void posted(int status, cJSON *r, void *ctx)
     struct post *p = ctx;
     if (api_reply_ok(r) && jtrue(r, "pending") && jstr(r, "job")) {
         snprintf(p->job, sizeof p->job, "%s", jstr(r, "job"));
-        snprintf(p->service, sizeof p->service, "%s", jstr(r, "service") ? jstr(r, "service") : "lock");
+        snprintf(p->service, sizeof p->service, "%s", jstr_or(r, "service", "lock"));
         p->slot = (int)jnum_or(r, "slot", 0);
         p->until = lv_tick_get() + 245000;
         lv_timer_set_repeat_count(lv_timer_create(job_poll, 800, p), 1);
@@ -646,7 +645,7 @@ static void save(struct view *v, const char *id, const cJSON *value)
         cJSON_AddItemToObject(b, "value", cJSON_Duplicate(value, true));
     const cJSON *it;
     cJSON_ArrayForEach(it, v->data)
-        if (jstr(it, "id") && !strcmp(jstr(it, "id"), id) && jget(it, "slot") && !cJSON_IsNull(jget(it, "slot")))
+        if (jstr_is(it, "id", id) && jhas(it, "slot"))
             cJSON_AddItemToObject(b, "slot", cJSON_Duplicate(jget(it, "slot"), true));
     v->saving = true;
     shell_page_loading(PAGE_SETTINGS, true);
@@ -686,9 +685,9 @@ static void render_menu(void)
     const cJSON *c;
     int i = 0;
     cJSON_ArrayForEach(c, categories) {
-        bool hidden = (jget(c, "plugin") && !cJSON_IsNull(jget(c, "plugin"))) ||
-                      (jget(c, "parent") && !cJSON_IsNull(jget(c, "parent"))) ||
-                      (jstr(c, "view") && !strcmp(jstr(c, "view"), "apps"));
+        bool hidden = jhas(c, "plugin") ||
+                      jhas(c, "parent") ||
+                      jstr_is(c, "view", "apps");
         char key[32], label[128];
         snprintf(key, sizeof key, "cat:%d", i++);
         label_text(jget(c, "label"), label, sizeof label);
@@ -701,10 +700,9 @@ static void render_cat(struct view *v)
 {
     const cJSON *it;
     cJSON_ArrayForEach(it, v->data) {
-        const char *type = jstr(it, "type") ? jstr(it, "type") : "";
-        const char *id = jstr(it, "id") ? jstr(it, "id") : "";
-        /* Not offered here: the opacity and density preferences, the tip row and
-         * the disclaimer. */
+        const char *type = jstr_or(it, "type", "");
+        const char *id = jstr_or(it, "id", "");
+        /* Web-only items. */
         if (!strcmp(id, "ui_opacity") || !strcmp(id, "donate") ||
             !strcmp(id, "disclaimer"))
             continue;
@@ -718,7 +716,7 @@ static void render_cat(struct view *v)
             value_text(it, value, sizeof value);
         const char *icon = icon_for(id, icon_for(v->cat, NULL));
         if (!strncmp(id, "nav_slot", 8)) {
-            int page = atoi(jstr(it, "value") ? jstr(it, "value") : "0");
+            int page = atoi(jstr_or(it, "value", "0"));
             icon = page >= 0 && page < PAGE_COUNT ? page_icons[page] : "layout";
         }
         unsigned flags = !strcmp(type, "info") ? ROW_INFO : 0;
@@ -758,7 +756,7 @@ static bool in_draft(const cJSON *draft, const cJSON *value)
 static void render_edit(struct view *v)
 {
     const char *type = jstr(v->item, "type");
-    const char *id = jstr(v->item, "id") ? jstr(v->item, "id") : "";
+    const char *id = jstr_or(v->item, "id", "");
     const cJSON *o;
     int i = 0;
     if (!strcmp(type, "choice")) {
@@ -768,7 +766,7 @@ static void render_edit(struct view *v)
             label_text(jget(o, "label"), label, sizeof label);
             const char *icon = icon_for(id, NULL);
             if (!strcmp(id, "ui_theme"))
-                icon = jstr(o, "value") && !strcmp(jstr(o, "value"), "light") ? "sun" : "moon";
+                icon = jstr_is(o, "value", "light") ? "sun" : "moon";
             else if (!strncmp(id, "nav_slot", 8) && jstr(o, "value"))
                 icon = page_icons[atoi(jstr(o, "value")) % PAGE_COUNT];
             row(key, icon, label, NULL, same_value(jget(o, "value"), jget(v->item, "value")) ? ROW_CHECK : 0);
@@ -777,7 +775,7 @@ static void render_edit(struct view *v)
         lv_obj_t *card = ui_card(body);
         lv_obj_t *n = ui_text(card, 28, true, theme.text);
         lv_obj_set_style_align(n, LV_ALIGN_CENTER, 0);
-        lv_label_set_text_fmt(n, "%g%s", v->draft ? v->draft->valuedouble : 0, jstr(v->item, "unit") ? jstr(v->item, "unit") : "");
+        lv_label_set_text_fmt(n, "%g%s", v->draft ? v->draft->valuedouble : 0, jstr_or(v->item, "unit", ""));
         lv_obj_t *buttons = ui_box(body, LV_FLEX_FLOW_ROW, 14);
         row("num:-", "minus", "−", NULL, 0);
         row("num:+", "plus", "+", NULL, 0);
@@ -816,7 +814,7 @@ static void render_at(struct view *v)
         lv_obj_t *r = row(key, "terminal", label, NULL, 0);
         lv_obj_t *cmd = ui_text(r, 11, false, theme.dim);
         lv_obj_set_width(cmd, LV_PCT(100));
-        lv_label_set_text(cmd, jstr(p, "cmd") ? jstr(p, "cmd") : "");
+        lv_label_set_text(cmd, jstr_or(p, "cmd", ""));
         lv_obj_set_flex_flow(r, LV_FLEX_FLOW_ROW_WRAP);
     }
     ui_note(body, L("任意指令可通过 SSH 的 e5-at 或插件的 /api/at 发送", "Any command: e5-at over SSH, or /api/at from a plugin"));
@@ -848,8 +846,8 @@ static void render_devices(struct view *v)
     cJSON_ArrayForEach(d, v->data) {
         char key[32], value[64];
         snprintf(key, sizeof key, "dev:%d", i++);
-        const char *name = jstr(d, "name") ? jstr(d, "name") : jstr(d, "ip") ? jstr(d, "ip") : jstr(d, "mac");
-        const char *via = jstr(d, "via") && !strcmp(jstr(d, "via"), "usb") ? "USB" : "Wi-Fi";
+        const char *name = jstr_or(d, "name", jstr_or(d, "ip", jstr(d, "mac")));
+        const char *via = jstr_is(d, "via", "usb") ? "USB" : "Wi-Fi";
         if (jtrue(d, "blocked"))
             snprintf(value, sizeof value, "%s", L("已禁止上网", "Blocked"));
         else if (jtrue(d, "online"))
@@ -864,7 +862,7 @@ static void render_device(struct view *v)
 {
     const cJSON *d = v->item;
     char via[64];
-    const char *kind = jstr(d, "via") && !strcmp(jstr(d, "via"), "usb") ? "USB" : "Wi-Fi";
+    const char *kind = jstr_is(d, "via", "usb") ? "USB" : "Wi-Fi";
     double signal;
     if (!jtrue(d, "online"))
         snprintf(via, sizeof via, "%s", L("离线", "Offline"));
@@ -873,13 +871,13 @@ static void render_device(struct view *v)
     else
         snprintf(via, sizeof via, "%s", kind);
     row("info:mac", "device", "MAC", jstr(d, "mac"), ROW_INFO);
-    row("info:ip", "globe", "IP", jstr(d, "ip") ? jstr(d, "ip") : "--", ROW_INFO);
+    row("info:ip", "globe", "IP", jstr_or(d, "ip", "--"), ROW_INFO);
     row("info:via", "wifi", L("连接", "Via"), via, ROW_INFO);
     if (jtrue(d, "blocked"))
         row("act:unblock", "shield", L("允许上网", "Allow internet"), NULL, 0);
     else
         row("act:block", "shield", L("禁止上网", "Block internet"), NULL, 0);
-    if (jtrue(d, "online") && jstr(d, "via") && !strcmp(jstr(d, "via"), "wifi"))
+    if (jtrue(d, "online") && jstr_is(d, "via", "wifi"))
         row("act:kick", "shield", L("踢下 Wi-Fi", "Kick off Wi-Fi"), NULL, 0);
 }
 
@@ -927,8 +925,8 @@ static void render_bt(struct view *v)
                 ui_heading(body, pass ? L("附近的设备", "Nearby") : L("我的设备", "My devices"));
             any = true;
             char key[64];
-            snprintf(key, sizeof key, "btd:%s", jstr(d, "mac") ? jstr(d, "mac") : "");
-            row(key, "bluetooth", jstr(d, "name") ? jstr(d, "name") : jstr(d, "mac"), bt_word(d),
+            snprintf(key, sizeof key, "btd:%s", jstr_or(d, "mac", ""));
+            row(key, "bluetooth", jstr_or(d, "name", jstr(d, "mac")), bt_word(d),
                 ROW_CHEVRON | (jtrue(d, "connected") ? ROW_ON : 0));
         }
         if (pass && powered && !any) {
@@ -945,7 +943,7 @@ static void render_btdev(struct view *v)
     struct view *parent = depth >= 2 ? &stack[depth - 2] : NULL;
     const cJSON *d = NULL, *x, *devices = parent ? jget(parent->data, "devices") : NULL;
     cJSON_ArrayForEach(x, devices)
-        if (jstr(x, "mac") && !strcmp(jstr(x, "mac"), v->text))
+        if (jstr_is(x, "mac", v->text))
             d = x;
     row("info:btmac", "bluetooth", "MAC", v->text, ROW_INFO);
     row("info:btst", "info", L("状态", "State"), d ? bt_word(d) : "", ROW_INFO);
@@ -1021,7 +1019,7 @@ static void apn_loaded(int status, cJSON *r, void *ctx)
         if (v->slot < 0)
             v->slot = (int)jnum_or(r, "data_sim", -1);
     } else {
-        snprintf(v->text, sizeof v->text, "%s", jstr(r, "error") ? jstr(r, "error") : "apn_unavailable");
+        snprintf(v->text, sizeof v->text, "%s", jstr_or(r, "error", "apn_unavailable"));
     }
     if (v == top())
         render();
@@ -1130,8 +1128,8 @@ static void render_apn(struct view *v)
             lv_obj_set_style_border_width(profile, 1, 0);
         }
         lv_obj_t *head = ui_box(profile, LV_FLEX_FLOW_ROW, 8);
-        const char *name = jstr(p, "name") ? jstr(p, "name") : "";
-        bool automatic = jstr(p, "id") && !strcmp(jstr(p, "id"), "automatic") && !strcmp(name, "SIM default");
+        const char *name = jstr_or(p, "name", "");
+        bool automatic = jstr_is(p, "id", "automatic") && !strcmp(name, "SIM default");
         lv_label_set_text(ui_text(head, 14, true, theme.text), automatic ? L("SIM 默认", "SIM default") : name);
         if (jtrue(p, "current"))
             lv_label_set_text(ui_text(head, 10, false, theme.accent), L("当前使用", "Current"));
@@ -1184,7 +1182,7 @@ static void field(const char *name, const char *label, int max, bool password, c
     lv_obj_set_style_pad_all(ta, S(8), 0);
     if (placeholder)
         lv_textarea_set_placeholder_text(ta, placeholder);
-    lv_textarea_set_text(ta, jstr(v->draft, name) ? jstr(v->draft, name) : "");
+    lv_textarea_set_text(ta, jstr_or(v->draft, name, ""));
     lv_obj_set_user_data(ta, (void *)name);
     lv_obj_add_event_cb(ta, on_field, LV_EVENT_VALUE_CHANGED, NULL);
     keyboard_bind(ta);
@@ -1231,9 +1229,9 @@ static void apn_edit(struct view *v, const cJSON *p)
     e->draft = cJSON_CreateObject();
     static const char *const fields[] = {"id", "name", "apn", "username"};
     for (int i = 0; i < 4; i++)
-        cJSON_AddStringToObject(e->draft, fields[i], jstr(p, fields[i]) ? jstr(p, fields[i]) : "");
-    cJSON_AddStringToObject(e->draft, "pdptype", jstr(p, "pdptype") ? jstr(p, "pdptype") : "IPV4V6");
-    cJSON_AddStringToObject(e->draft, "auth", jstr(p, "auth") ? jstr(p, "auth") : "none");
+        cJSON_AddStringToObject(e->draft, fields[i], jstr_or(p, fields[i], ""));
+    cJSON_AddStringToObject(e->draft, "pdptype", jstr_or(p, "pdptype", "IPV4V6"));
+    cJSON_AddStringToObject(e->draft, "auth", jstr_or(p, "auth", "none"));
     cJSON_AddStringToObject(e->draft, "password", "");
     cJSON_AddFalseToObject(e->draft, "clear_password");
 }
@@ -1253,7 +1251,7 @@ static void trimmed(cJSON *payload, const char *name, const char *value)
 static void apn_save(struct view *e)
 {
     const cJSON *d = e->draft;
-    const char *name = jstr(d, "name") ? jstr(d, "name") : "";
+    const char *name = jstr_or(d, "name", "");
     while (*name == ' ')
         name++;
     if (!*name) {
@@ -1315,7 +1313,7 @@ static void apn_clicked(struct view *v, const char *key)
             return;
         cJSON *payload = cJSON_CreateObject();
         if (!strcmp(action, "delete")) {
-            cJSON_AddStringToObject(payload, "id", jstr(p, "id") ? jstr(p, "id") : "");
+            cJSON_AddStringToObject(payload, "id", jstr_or(p, "id", ""));
             apn_change(v, "delete", payload);
             return;
         }
@@ -1326,7 +1324,7 @@ static void apn_clicked(struct view *v, const char *key)
             return;
         }
         if (p)
-            cJSON_AddStringToObject(payload, "id", jstr(p, "id") ? jstr(p, "id") : "");
+            cJSON_AddStringToObject(payload, "id", jstr_or(p, "id", ""));
         cJSON_AddTrueToObject(payload, "remember");
         cJSON_AddNumberToObject(payload, "data_sim", sim);
         apn_change(v, !strcmp(action, "auto") ? "auto" : "apply", payload);
@@ -1389,11 +1387,11 @@ static void open_category(const cJSON *c)
 {
     char label[128];
     label_text(jget(c, "label"), label, sizeof label);
-    const char *kind = jstr(c, "view") ? jstr(c, "view") : "";
+    const char *kind = jstr_or(c, "view", "");
     enum kind k = !strcmp(kind, "at") ? V_AT : !strcmp(kind, "bluetooth") ? V_BT : !strcmp(kind, "devices") ? V_DEVICES
                 : !strcmp(kind, "apn") ? V_APN : V_CAT;
     struct view *v = push(k, label);
-    snprintf(v->cat, sizeof v->cat, "%s", jstr(c, "id") ? jstr(c, "id") : "");
+    snprintf(v->cat, sizeof v->cat, "%s", jstr_or(c, "id", ""));
     switch (k) {
     case V_AT:
         v->slot = (int)jnum_or(app.status, "modem.sim_card", 0);
@@ -1420,7 +1418,7 @@ static const cJSON *category(const char *id)
 {
     const cJSON *c;
     cJSON_ArrayForEach(c, categories)
-        if (jstr(c, "id") && !strcmp(jstr(c, "id"), id))
+        if (jstr_is(c, "id", id))
             return c;
     return NULL;
 }
@@ -1429,7 +1427,7 @@ static const cJSON *item(struct view *v, const char *id)
 {
     const cJSON *it;
     cJSON_ArrayForEach(it, v->data)
-        if (jstr(it, "id") && !strcmp(jstr(it, "id"), id))
+        if (jstr_is(it, "id", id))
             return it;
     return NULL;
 }
@@ -1472,7 +1470,7 @@ static void item_clicked(struct view *v, const char *id, const char *key)
     const cJSON *it = item(v, id);
     if (!it)
         return;
-    const char *type = jstr(it, "type") ? jstr(it, "type") : "";
+    const char *type = jstr_or(it, "type", "");
     if (!strcmp(v->cat, "network") && (!strcmp(id, "lte_bands") || !strcmp(id, "nr_bands"))) {
         snprintf(v->busy, sizeof v->busy, "%s", id);
         v->saving = true;
@@ -1481,7 +1479,7 @@ static void item_clicked(struct view *v, const char *id, const char *key)
         return;
     }
     if (!strcmp(type, "category")) {
-        const cJSON *c = category(jstr(it, "category") ? jstr(it, "category") : "");
+        const cJSON *c = category(jstr_or(it, "category", ""));
         if (c)
             open_category(c);
     } else if (!strcmp(type, "toggle")) {
@@ -1574,7 +1572,7 @@ static void at_replied(int status, cJSON *r, void *ctx)
         v->reply = strdup(reply && *reply ? reply : "OK");
     } else {
         char error[256] = "";
-        error_text(jstr(r, "error") ? jstr(r, "error") : "", error, sizeof error);
+        error_text(jstr_or(r, "error", ""), error, sizeof error);
         size_t n = strlen(error) + 32;
         v->reply = malloc(n);
         snprintf(v->reply, n, "%s: %s", L("失败", "Failed"), error);
@@ -1692,14 +1690,14 @@ static void clicked(const char *key)
         label_text(jget(p, "label"), label, sizeof label);
         int slot = v->slot;
         struct view *r = push(V_ATRES, L("执行结果", "Result"));
-        snprintf(r->text, sizeof r->text, "%s", jstr(p, "cmd") ? jstr(p, "cmd") : "");
+        snprintf(r->text, sizeof r->text, "%s", jstr_or(p, "cmd", ""));
         r->slot = slot;
         at_run(r);
     } else if (!strcmp(k, "atagain")) {
         at_run(v);
     } else if (!strcmp(k, "dev")) {
         const cJSON *d = cJSON_GetArrayItem(v->data, atoi(arg));
-        const char *name = jstr(d, "name") ? jstr(d, "name") : jstr(d, "ip") ? jstr(d, "ip") : jstr(d, "mac");
+        const char *name = jstr_or(d, "name", jstr_or(d, "ip", jstr(d, "mac")));
         struct view *n = push(V_DEVICE, name ? name : "");
         n->item = cJSON_Duplicate(d, true);
         render();
@@ -1708,7 +1706,7 @@ static void clicked(const char *key)
             return;
         snprintf(v->text, sizeof v->text, "%s", arg);
         cJSON *b = cJSON_CreateObject();
-        cJSON_AddStringToObject(b, "mac", jstr(v->item, "mac") ? jstr(v->item, "mac") : "");
+        cJSON_AddStringToObject(b, "mac", jstr_or(v->item, "mac", ""));
         cJSON_AddStringToObject(b, "action", arg);
         api_post("/devices", b, device_acted, tag(v));
         render();
@@ -1727,9 +1725,9 @@ static void clicked(const char *key)
     } else if (!strcmp(k, "btd")) {
         const cJSON *d, *found = NULL;
         cJSON_ArrayForEach(d, jget(v->data, "devices"))
-            if (jstr(d, "mac") && !strcmp(jstr(d, "mac"), arg))
+            if (jstr_is(d, "mac", arg))
                 found = d;
-        struct view *n = push(V_BTDEV, jstr(found, "name") ? jstr(found, "name") : arg);
+        struct view *n = push(V_BTDEV, jstr_or(found, "name", arg));
         snprintf(n->text, sizeof n->text, "%s", arg);
         render();
     } else if (!strcmp(k, "bta")) {

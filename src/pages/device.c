@@ -87,9 +87,9 @@ static void status(const cJSON *st)
     }
     usb_text(jget(st, "usb"), text, sizeof text);
     ui_set_text(ui.usb, text);
-    ui_set_text(ui.lan, jstr(st, "system.lan_ip") ? jstr(st, "system.lan_ip") : "--");
-    ui_set_text(ui.v4, jstr(st, "wan.ipv4") ? jstr(st, "wan.ipv4") : "--");
-    const char *v6 = jstr(st, "wan.ipv6_prefix") ? jstr(st, "wan.ipv6_prefix") : jstr(st, "wan.ipv6");
+    ui_set_text(ui.lan, jstr_or(st, "system.lan_ip", "--"));
+    ui_set_text(ui.v4, jstr_or(st, "wan.ipv4", "--"));
+    const char *v6 = jstr_or(st, "wan.ipv6_prefix", jstr(st, "wan.ipv6"));
     ui_set_text(ui.v6, v6 ? v6 : "--");
     paint_level();
 }

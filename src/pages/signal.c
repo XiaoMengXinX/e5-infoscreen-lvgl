@@ -131,7 +131,7 @@ static void render_sims(const cJSON *st)
         ui_set_text(ui.sims[slot].role, data ? L("数据卡", "Data") : L("副卡", "Secondary"));
         lv_obj_set_style_text_color(ui.sims[slot].slot, data ? theme.accent : theme.text, 0);
         ui_set_text(ui.sims[slot].state, registration(jstr(sim, "registration")));
-        ui_set_text(ui.sims[slot].radio, jstr(sim, "radio_label") ? jstr(sim, "radio_label") : "—");
+        ui_set_text(ui.sims[slot].radio, jstr_or(sim, "radio_label", "—"));
         double rsrp;
         if (jnum(sim, "signal.rsrp", &rsrp))
             ui_set_fmt(ui.sims[slot].signal, "%g dBm", rsrp);
@@ -152,7 +152,7 @@ static void status(const cJSON *st)
     const cJSON *m = jget(st, "modem"), *c = jget(m, "cell");
     const char *radio = jstr(m, "radio_label");
     ui_set_text(ui.tech, radio && *radio ? radio : tech_name(jstr(m, "tech")));
-    ui_set_text(ui.band, jstr(c, "band") ? jstr(c, "band") : "");
+    ui_set_text(ui.band, jstr_or(c, "band", ""));
     const char *op = operator_name(jstr(m, "operator"));
     const char *reg = jstr(m, "registration");
     if (op && reg && !strcmp(reg, "roaming"))

@@ -113,7 +113,7 @@ static void render_list(void)
         }
         lv_obj_t *top = ui_box(row, LV_FLEX_FLOW_ROW, 8);
         lv_obj_t *from = ui_text(top, 13, true, theme.text);
-        lv_label_set_text(from, jstr(m, "number") ? jstr(m, "number") : L("未知号码", "Unknown"));
+        lv_label_set_text(from, jstr_or(m, "number", L("未知号码", "Unknown")));
         lv_obj_set_flex_grow(from, 1);
         char text[64];
         meta(m, text, sizeof text);
@@ -123,7 +123,7 @@ static void render_list(void)
         lv_obj_set_size(preview, LV_PCT(100), lv_font_get_line_height(F(13)));
         lv_label_set_long_mode(preview, LV_LABEL_LONG_MODE_DOTS);
         char line[160];
-        snprintf(line, sizeof line, "%s", jstr(m, "text") ? jstr(m, "text") : "");
+        snprintf(line, sizeof line, "%s", jstr_or(m, "text", ""));
         for (char *c = line; *c; c++)
             if (*c == '\n' || *c == '\r' || *c == '\t')
                 *c = ' ';
@@ -161,7 +161,7 @@ static void paint_view(const cJSON *m)
     char text[64];
     meta(m, text, sizeof text);
     ui_set_text(ui.time, text);
-    ui_set_text(ui.text, jstr(m, "text") ? jstr(m, "text") : "");
+    ui_set_text(ui.text, jstr_or(m, "text", ""));
 }
 
 static void open_message(double id)
@@ -170,7 +170,7 @@ static void open_message(double id)
     if (!m)
         return;
     open_id = id;
-    ui_set_text(ui.from, jstr(m, "number") ? jstr(m, "number") : L("未知号码", "Unknown"));
+    ui_set_text(ui.from, jstr_or(m, "number", L("未知号码", "Unknown")));
     paint_view(m);
     disarm();
     show_view(true);

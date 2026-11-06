@@ -122,7 +122,7 @@ static void on_toggle(lv_event_t *e)
 static void status(const cJSON *st)
 {
     const cJSON *w = jget(st, "wifi");
-    ui_set_text(ui.ssid, jstr(w, "ssid") ? jstr(w, "ssid") : "--");
+    ui_set_text(ui.ssid, jstr_or(w, "ssid", "--"));
     bool enabled = jtrue(w, "enabled"), up = jtrue(w, "up");
     bool on = wifi_pending >= 0 ? wifi_pending : enabled;
     ui_button_text(ui.toggle, on ? L("开", "On") : L("关", "Off"));
@@ -142,7 +142,7 @@ static void status(const cJSON *st)
     ui_set_text(ui.qr_off, raw ? error : enabled ? L("热点未启动", "Hotspot not up") : L("热点已关闭", "Hotspot off"));
 
     char key[256];
-    snprintf(key, sizeof key, "%s|%d|%d|%g", jstr(w, "ssid") ? jstr(w, "ssid") : "", jtrue(w, "secured"),
+    snprintf(key, sizeof key, "%s|%d|%d|%g", jstr_or(w, "ssid", ""), jtrue(w, "secured"),
              jtrue(w, "hidden"), jnum_or(w, "qr_revision", 0));
     if (jstr(w, "ssid") && strcmp(key, qr_for)) {
         snprintf(qr_for, sizeof qr_for, "%s", key);
@@ -164,14 +164,14 @@ static void status(const cJSON *st)
     cJSON_ArrayForEach(c, clients) {
         lv_obj_t *row = ui_box(ui.clients, LV_FLEX_FLOW_ROW, 8);
         lv_obj_set_flex_align(row, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        const char *name = jstr(c, "name") ? jstr(c, "name") : jstr(c, "ip") ? jstr(c, "ip") : jstr(c, "mac");
+        const char *name = jstr_or(c, "name", jstr_or(c, "ip", jstr(c, "mac")));
         lv_obj_t *label = ui_text(row, 13, false, theme.text);
         lv_obj_set_flex_grow(label, 1);
         lv_label_set_long_mode(label, LV_LABEL_LONG_MODE_DOTS);
         lv_label_set_text(label, name ? name : L("未命名", "unnamed"));
         const char *via = jstr(c, "via");
         char detail[96];
-        int n = snprintf(detail, sizeof detail, "%s · %s", jstr(c, "ip") ? jstr(c, "ip") : "",
+        int n = snprintf(detail, sizeof detail, "%s · %s", jstr_or(c, "ip", ""),
                          via && !strcmp(via, "usb") ? "USB" : "Wi-Fi");
         double signal;
         if (jnum(c, "signal", &signal) && n > 0 && (size_t)n < sizeof detail)

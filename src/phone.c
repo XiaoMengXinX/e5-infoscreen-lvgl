@@ -133,7 +133,7 @@ bool phone_keep_awake(void)
 static void status_read(int status, cJSON *r, void *ctx)
 {
     if (!api_read_ok(status, r)) {
-        notice(jstr(r, "error") ? jstr(r, "error") : L("服务不可用", "Unavailable"));
+        notice(jstr_or(r, "error", L("服务不可用", "Unavailable")));
         render();
         return;
     }
@@ -163,9 +163,9 @@ static void performed(int status, cJSON *r, void *ctx)
         read_status();
     } else {
         char error[200];
-        error_text(jstr(r, "error") ? jstr(r, "error") : status ? "HTTP error" : L("请求超时，通话结果尚未确认。请查看通话状态，不要重复拨号。",
-                   "Request timed out; call result is unknown. Check its state before dialing again."), error, sizeof error);
-        toast("%s%s%s", jstr(r, "stage") ? jstr(r, "stage") : "", jstr(r, "stage") ? ": " : "", error);
+        error_text(jstr_or(r, "error", status ? "HTTP error" : L("请求超时，通话结果尚未确认。请查看通话状态，不要重复拨号。",
+                   "Request timed out; call result is unknown. Check its state before dialing again.")), error, sizeof error);
+        toast("%s%s%s", jstr_or(r, "stage", ""), jstr(r, "stage") ? ": " : "", error);
     }
     if (!strcmp(a->name, "call") || !strcmp(a->name, "hangup"))
         dial_after = lv_tick_get() + 2000;
@@ -238,10 +238,10 @@ static void tone_sent(int status, cJSON *r, void *ctx)
         tone_count = 0;
         sending_tone = false;
         toast("%s: %s", L("按键音发送失败，请确认通话状态后重试", "Tone failed; check the call before trying again"),
-              jstr(r, "error") ? jstr(r, "error") : "");
+              jstr_or(r, "error", ""));
         return;
     }
-    if (strcmp(id, tones[0].id) || strcmp(jstr(c, "state") ? jstr(c, "state") : "", "active")) {
+    if (strcmp(id, tones[0].id) || !jstr_is(c, "state", "active")) {
         tone_count = 0;
         sending_tone = false;
         return;
@@ -348,8 +348,8 @@ static void apply_live(const cJSON *r)
         cJSON_Delete(audio);
         audio = cJSON_Duplicate(jget(r, "audio"), true);
         const char *state = jstr(current(), "state");
-        bool missing = state && !strcmp(state, "active") && (!jtrue(audio, "active") || (jget(audio, "error") && !cJSON_IsNull(jget(audio, "error"))));
-        notice(missing ? (jstr(audio, "error") ? jstr(audio, "error") : L("通话音频尚未启动", "Call audio has not started")) : NULL);
+        bool missing = state && !strcmp(state, "active") && (!jtrue(audio, "active") || jhas(audio, "error"));
+        notice(missing ? jstr_or(audio, "error", L("通话音频尚未启动", "Call audio has not started")) : NULL);
     }
     if (failed && cJSON_IsString(error))
         notice(error->valuestring);
@@ -583,13 +583,13 @@ static void on_route_sheet(lv_event_t *e)
     lv_group_t *previous = lv_group_get_default();
     lv_group_set_default(group);
     lv_obj_t *panel = sheet(L("通话音频", "Call audio"));
-    const char *route = jstr(audio, "route") ? jstr(audio, "route") : jtrue(audio, "speaker") ? "speaker" : "receiver";
+    const char *route = jstr_or(audio, "route", jtrue(audio, "speaker") ? "speaker" : "receiver");
     bool bt = jtrue(audio, "bluetooth.connected");
     static const char *const routes[] = {"receiver", "speaker", "bluetooth"};
     const char *names[] = {L("手机", "Phone"), L("扬声器", "Speaker"), L("蓝牙耳机", "Bluetooth")};
     const char *icons[] = {"device", "volume", "bluetooth"};
     for (int i = 0; i < 3; i++) {
-        const char *detail = i == 2 ? (bt ? (jstr(audio, "bluetooth.device") ? jstr(audio, "bluetooth.device") : names[2])
+        const char *detail = i == 2 ? (bt ? jstr_or(audio, "bluetooth.device", names[2])
                                           : L("未连接通话耳机", "No call headset connected"))
                                     : NULL;
         lv_obj_t *r = ui_row(panel, icons[i], names[i], detail, !strcmp(route, routes[i]) ? ROW_CHECK : 0, on_route,
@@ -813,7 +813,7 @@ static void draw(void)
     cJSON_ArrayForEach(x, calls) {
         char label[96], xid[32];
         call_id(x, xid);
-        snprintf(label, sizeof label, "%s%s%s", jstr(x, "sim") ? jstr(x, "sim") : "", jstr(x, "sim") ? " · " : "",
+        snprintf(label, sizeof label, "%s%s%s", jstr_or(x, "sim", ""), jstr(x, "sim") ? " · " : "",
                  state_word(jstr(x, "state")));
         lv_obj_t *chip = ui_button(ui.choices, label, on_choice, (void *)(intptr_t)i++);
         lv_obj_set_flex_grow(chip, 1);
@@ -821,7 +821,7 @@ static void draw(void)
         lv_obj_set_style_bg_color(chip, !strcmp(xid, id) ? theme.active : theme.button, 0);
     }
     ui_set_text(ui.call_state, state_word(state));
-    ui_set_text(ui.call_sim, jstr(c, "sim") ? jstr(c, "sim") : "");
+    ui_set_text(ui.call_sim, jstr_or(c, "sim", ""));
     const char *num = jstr(c, "number");
     ui_set_text(ui.call_name, num && *num ? num : L("未知号码", "Unknown"));
     if (active && strcmp(active_id, id)) {
@@ -844,7 +844,7 @@ static void draw(void)
     const char *audio_sim = jstr(audio, "sim"), *call_sim = jstr(c, "sim");
     bool other = jtrue(audio, "active") && audio_sim && call_sim && strcmp(audio_sim, call_sim);
     bool unavailable = pending || !jtrue(audio, "available") || other;
-    const char *route = jstr(audio, "route") ? jstr(audio, "route") : jtrue(audio, "speaker") ? "speaker" : "receiver";
+    const char *route = jstr_or(audio, "route", jtrue(audio, "speaker") ? "speaker" : "receiver");
     control_set(ui.route,
                 jtrue(audio, "route_pending") ? L("连接蓝牙…", "Connecting…")
                 : !strcmp(route, "speaker")   ? L("扬声器", "Speaker")
@@ -997,7 +997,7 @@ bool phone_key(const struct key_event *key)
     }
     switch (key->kind) {
     case KEY_KIND_CHAR:
-        if (c && jstr(c, "state") && !strcmp(jstr(c, "state"), "active")) {
+        if (c && jstr_is(c, "state", "active")) {
             if (!key->repeat)
                 send_tone(key->ch);
         } else if (!c && !pending && !call_only) {

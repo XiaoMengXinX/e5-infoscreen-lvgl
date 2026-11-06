@@ -72,8 +72,8 @@ static void render_update(void)
     lv_obj_set_hidden(ui.update, hidden);
     if (hidden)
         return;
-    ui_set_fmt(ui.update_version, "%s → %s", jstr(u, "current") ? jstr(u, "current") : "",
-               jstr(u, "latest.version") ? jstr(u, "latest.version") : "");
+    ui_set_fmt(ui.update_version, "%s → %s", jstr_or(u, "current", ""),
+               jstr_or(u, "latest.version", ""));
     char notes[1024];
     label_text(jget(u, "latest.notes"), notes, sizeof notes);
     ui_set_text(ui.update_notes, *notes ? notes : L("只更新信息屏，设置和应用保留", "Settings and apps stay; the screen only"));
@@ -357,7 +357,7 @@ static void render_usb(const cJSON *st)
 static void status(const cJSON *st)
 {
     char a[48], b[48], text[256];
-    bool bytes = jstr(st, "screen.speed_unit") && !strcmp(jstr(st, "screen.speed_unit"), "bytes");
+    bool bytes = jstr_is(st, "screen.speed_unit", "bytes");
     double v;
     fmt_speed(jnum(st, "traffic.rx_rate", &v) ? v : NAN, bytes, a, b, sizeof a);
     ui_set_text(ui.rx, a);

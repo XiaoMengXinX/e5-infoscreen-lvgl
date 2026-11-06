@@ -91,7 +91,7 @@ static void render_days(const cJSON *days)
         double rx = jnum_or(d, "rx", 0), tx = jnum_or(d, "tx", 0);
         lv_obj_t *row = ui_box(ui.days, LV_FLEX_FLOW_ROW, 8);
         lv_obj_t *date = ui_text(row, 11, false, theme.dim);
-        lv_label_set_text(date, jstr(d, "date") ? jstr(d, "date") : "");
+        lv_label_set_text(date, jstr_or(d, "date", ""));
         lv_obj_set_width(date, S(70));
         lv_obj_t *bar = ui_box(row, LV_FLEX_FLOW_ROW, 0);
         lv_obj_set_flex_grow(bar, 1);
@@ -125,7 +125,7 @@ static void loaded(int status, cJSON *u, void *ctx)
     bool ok = api_read_ok(status, u);
     shell_page_error(PAGE_TRAFFIC, !ok);
     clear_display();
-    const char *warning = !ok || (jget(u, "error") && !cJSON_IsNull(jget(u, "error"))) ? L("流量统计暂不可用", "Usage unavailable")
+    const char *warning = !ok || jhas(u, "error") ? L("流量统计暂不可用", "Usage unavailable")
                         : !jtrue(u, "available")       ? L("系统时间尚未同步", "Clock not synchronized")
                         : jtrue(u, "storage_error")    ? L("流量记录保存失败", "Could not save usage")
                         : jfalse(u, "interface_available") ? L("网卡离线 · 历史记录仍可查看", "Interface offline · History is available")

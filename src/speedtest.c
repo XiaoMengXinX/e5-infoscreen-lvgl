@@ -1,7 +1,5 @@
-/* Speed test: runs speedtest-go (speedtest.net servers) or globalspeedtest-go
- * (CAICT servers) and shows its live figures on a gauge. Their progress is only
- * printed to a terminal, so they run on a pseudo-terminal and the screen lines
- * they redraw are parsed as they come. */
+/* The test programs print their progress only to a terminal, so they run on a
+ * pseudo-terminal and the lines they redraw are parsed. */
 #include "speedtest.h"
 
 #include <errno.h>
@@ -23,11 +21,8 @@
 #include "ui.h"
 #include "util.h"
 
-/* Installs the latest release's arm64 archive. jsDelivr names the version; the
- * archive comes through GitHub proxies reachable from mainland China, then from
- * GitHub itself, and the first copy matching the release's checksums is taken.
- * (The proxies answer releases/latest with a relative redirect uclient-fetch
- * cannot follow, hence the version.) */
+/* The version comes from jsDelivr: the proxies answer releases/latest with a
+ * relative redirect that uclient-fetch cannot follow. */
 static const char global_install[] =
     "fetch() {\n"
     "  if command -v curl >/dev/null; then curl -fsSL --connect-timeout 10 --max-time 300 -o \"$2\" \"$1\"\n"
@@ -51,7 +46,6 @@ static const char global_install[] =
 struct backend {
     const char *id, *zh, *en;
     const char *program;
-    /* A shell script installing the program, for one that is not in the feeds. */
     const char *install;
 };
 
@@ -62,7 +56,6 @@ static const struct backend backends[] = {
 #define BACKENDS ((int)(sizeof backends / sizeof *backends))
 static const struct backend *backend = &backends[0];
 
-/* Gauge marks, evenly spaced around the dial as on the speedtest.net app. */
 static const double marks[] = {0, 5, 10, 50, 100, 250, 500, 1000};
 #define SEGMENTS ((int)(sizeof marks / sizeof *marks) - 1)
 #define SWEEP 270
@@ -76,7 +69,7 @@ static struct {
     size_t len;
     enum phase phase;
     double ping, jitter, down, up, shown;
-    char isp[64], ip[48], sponsor[64], place[64], loss[32];
+    char isp[64], ip[48], sponsor[64], place[64];
 } test = {.pid = -1, .fd = -1};
 
 static struct {
@@ -86,8 +79,6 @@ static struct {
     lv_obj_t *marks[SEGMENTS + 1];
 } ui;
 static lv_timer_t *reader;
-
-/* ---------- gauge ---------- */
 
 static float gauge_position(double mbps)
 {
@@ -99,17 +90,11 @@ static float gauge_position(double mbps)
     return 1;
 }
 
-static bool uploading(void)
-{
-    return test.phase == UPLOAD;
-}
-
 static lv_color_t phase_color(void)
 {
-    return uploading() ? lv_color_hex(0xc06bff) : theme.accent;
+    return test.phase == UPLOAD ? lv_color_hex(0xc06bff) : theme.accent;
 }
 
-/* A tapered needle from a hub at the dial's centre. */
 static void draw_needle(lv_event_t *e)
 {
     if (test.phase != DOWNLOAD && test.phase != UPLOAD)
@@ -149,17 +134,16 @@ static void paint_gauge(void)
     float at = gauge_position(test.shown);
     lv_arc_set_value(ui.arc, (int32_t)lroundf(at * 1000));
     lv_obj_set_style_arc_color(ui.arc, phase_color(), LV_PART_INDICATOR);
-    for (int i = 0; i <= SEGMENTS; i++)
-        lv_obj_set_style_text_color(ui.marks[i], running && (float)i / SEGMENTS <= at ? theme.text : theme.dim, 0);
-    /* Before a test, and after one, only the button shows; the dial is for the test. */
+    for (int i = 0; i <= SEGMENTS; i++) {
+        lv_obj_set_style_text_color(ui.marks[i], (float)i / SEGMENTS <= at ? theme.text : theme.dim, 0);
+        lv_obj_set_hidden(ui.marks[i], !running);
+    }
     lv_obj_set_hidden(ui.go, busy);
     lv_obj_set_hidden(ui.arc, !running);
-    for (int i = 0; i <= SEGMENTS; i++)
-        lv_obj_set_hidden(ui.marks[i], !running);
     lv_obj_set_hidden(ui.readout, !busy);
     if (test.phase == DOWNLOAD || test.phase == UPLOAD) {
         ui_set_fmt(ui.value, test.shown >= 100 ? "%.0f" : "%.1f", test.shown);
-        ui_set_fmt(ui.unit, "%s Mbps", uploading() ? "↑" : "↓");
+        ui_set_fmt(ui.unit, "%s Mbps", test.phase == UPLOAD ? "↑" : "↓");
     } else if (test.phase == PING && test.ping > 0) {
         ui_set_fmt(ui.value, "%.0f", test.ping);
         ui_set_text(ui.unit, L("延迟 ms", "Ping ms"));
@@ -177,7 +161,6 @@ static void shown_anim(void *var, int32_t v)
     paint_gauge();
 }
 
-/* The needle eases to each new reading rather than jumping. */
 static void show_rate(double mbps)
 {
     lv_anim_delete(&test, shown_anim);
@@ -195,8 +178,6 @@ static void show_rate(double mbps)
     lv_anim_set_path_cb(&a, ui_ease_out);
     lv_anim_start(&a);
 }
-
-/* ---------- results ---------- */
 
 static void paint_result(lv_obj_t *label, double value, const char *fmt)
 {
@@ -222,13 +203,10 @@ static void paint(void)
     ui_set_text(ui.ip, *test.ip ? test.ip : "—");
     for (int i = 0; i < 2; i++)
         fit_info(ui.cells[i]);
-    /* The backend switches before a test only; once one has started, until the view
-     * opens again, the cell shows its server and neither a tap nor the keys reach it. */
+    /* The backend can be switched only until the first test after the view opens. */
     lv_obj_set_state(ui.cells[1], LV_STATE_DISABLED, test.phase != IDLE);
     paint_gauge();
 }
-
-/* ---------- program output ---------- */
 
 static double number_after(const char *line, const char *key)
 {
@@ -267,8 +245,8 @@ static void parse_server(const char *s)
     snprintf(test.place, sizeof test.place, "%.*s", (int)(end - place), place);
 }
 
-/* Moves on to a stage; false when the test is already past it. speedtest-go
- * redraws its whole screen on every tick, so finished stages keep reappearing. */
+/* False when the test is already past the stage: the screen is redrawn on
+ * every tick, so finished stages keep reappearing. */
 static bool reach(enum phase phase)
 {
     if (test.phase > phase)
@@ -281,7 +259,6 @@ static bool reach(enum phase phase)
 
 static void parse(const char *line)
 {
-    /* A test in progress keeps the screen awake. */
     idle_reset();
     const char *s;
     double v;
@@ -294,7 +271,6 @@ static void parse(const char *line)
             snprintf(test.ip, sizeof test.ip, "%.*s", (int)(open - s - 6), s + 5);
         }
     } else if (strstr(line, "Switching to the next server")) {
-        /* globalspeedtest-go moves on when a server fails; the next one starts over. */
         lv_anim_delete(&test, shown_anim);
         test.phase = CONNECTING;
         test.ping = test.jitter = test.down = test.up = test.shown = 0;
@@ -321,16 +297,12 @@ static void parse(const char *line)
         test.ping = number_after(s, "Latency: ");
         if (strstr(s, "Jitter: "))
             test.jitter = number_after(s, "Jitter: ");
-    } else if ((s = strstr(line, "Packet Loss: "))) {
-        snprintf(test.loss, sizeof test.loss, "%s", s + 13);
     } else {
         return;
     }
     paint();
 }
 
-/* Keeps the printable text of a redrawn screen line: no colour or cursor codes,
- * no spinner glyph. */
 static void take_line(void)
 {
     char clean[sizeof test.line];
@@ -362,14 +334,21 @@ static void run_test(void)
     run(CONNECTING, (char *const[]){(char *)backend->program, NULL});
 }
 
-static void finish(void)
+static int reap(void)
 {
+    int status = 0;
     close(test.fd);
     test.fd = -1;
-    int status = 0;
     waitpid(test.pid, &status, 0);
     test.pid = -1;
     lv_anim_delete(&test, shown_anim);
+    test.shown = 0;
+    return status;
+}
+
+static void finish(void)
+{
+    int status = reap();
     bool exited = WIFEXITED(status) && WEXITSTATUS(status) == 0;
     if (test.phase == INSTALLING) {
         if (exited) {
@@ -383,7 +362,6 @@ static void finish(void)
     }
     bool ok = exited && test.down > 0;
     test.phase = ok ? DONE : FAILED;
-    test.shown = 0;
     if (!ok)
         toast("%s", L("测速失败，请检查网络后重试", "Speed test failed; check the network and retry"));
     paint();
@@ -460,7 +438,6 @@ static void start(void)
     dialog_cancel();
 }
 
-/* Opening the view starts clean, without the last round's figures. */
 void speedtest_reset(void)
 {
     if (test.pid >= 0)
@@ -476,13 +453,8 @@ void speedtest_stop(void)
     kill(test.pid, SIGKILL);
     lv_timer_delete(reader);
     reader = NULL;
-    close(test.fd);
-    test.fd = -1;
-    waitpid(test.pid, NULL, 0);
-    test.pid = -1;
-    lv_anim_delete(&test, shown_anim);
+    reap();
     test.phase = IDLE;
-    test.shown = 0;
     paint();
 }
 
@@ -490,8 +462,6 @@ bool speedtest_running(void)
 {
     return test.pid >= 0;
 }
-
-/* ---------- backend ---------- */
 
 static void load_backend(void)
 {
@@ -521,14 +491,11 @@ static void on_server(lv_event_t *e)
     dialog_cancel();
 }
 
-/* ---------- view ---------- */
-
 static void on_go(lv_event_t *e)
 {
     start();
 }
 
-/* A headline figure: coloured arrow, caption and unit, then the value. */
 static lv_obj_t *headline(lv_obj_t *parent, const char *arrow, const char *title, lv_color_t color)
 {
     lv_obj_t *cell = ui_box(parent, LV_FLEX_FLOW_COLUMN, 0);
@@ -545,7 +512,6 @@ static lv_obj_t *headline(lv_obj_t *parent, const char *arrow, const char *title
     return value;
 }
 
-/* A small figure on the line under the headlines. */
 static lv_obj_t *stat(lv_obj_t *parent, const char *title)
 {
     lv_obj_t *row = ui_box(parent, LV_FLEX_FLOW_ROW, 4);
@@ -557,7 +523,6 @@ static lv_obj_t *stat(lv_obj_t *parent, const char *title)
     return value;
 }
 
-/* One line, cut short with dots when it runs past the room it is given. */
 static lv_obj_t *info_line(lv_obj_t *parent, int size, bool bold, lv_color_t color)
 {
     lv_obj_t *label = ui_text(parent, size, bold, color);
@@ -566,9 +531,8 @@ static lv_obj_t *info_line(lv_obj_t *parent, int size, bool bold, lv_color_t col
     return label;
 }
 
-/* Each line takes the width of its text unbroken, up to what the cell has
- * beside its icon. (A width left to the label would follow the text broken
- * into words, and the dots would cut the first word short.) */
+/* A label sized by LVGL measures the text wrapped into words, so the dots would
+ * cut the first word short; size it to the unwrapped text instead. */
 static void fit_info(lv_obj_t *cell)
 {
     lv_obj_t *icon = lv_obj_get_child(cell, 0), *text = lv_obj_get_child(cell, 1);
@@ -587,7 +551,6 @@ static void on_info_size(lv_event_t *e)
     fit_info(lv_event_get_current_target_obj(e));
 }
 
-/* An icon and two lines, centred in half the row as the headlines above are. */
 static lv_obj_t *info(lv_obj_t *parent, const char *icon, lv_obj_t **title, lv_obj_t **detail)
 {
     lv_obj_t *cell = ui_box(parent, LV_FLEX_FLOW_ROW, 6);
@@ -642,7 +605,6 @@ void speedtest_create(lv_obj_t *parent)
     lv_obj_set_style_arc_rounded(ui.arc, true, 0);
     lv_obj_set_style_arc_rounded(ui.arc, true, LV_PART_INDICATOR);
 
-    /* The marks, inside the ring; the ones the needle has passed light up. */
     for (int i = 0; i <= SEGMENTS; i++) {
         float angle = (135 + SWEEP * (float)i / SEGMENTS) * (float)M_PI / 180;
         float r = size / 2.0f - S(26);
@@ -659,7 +621,6 @@ void speedtest_create(lv_obj_t *parent)
     lv_obj_set_clickable(ui.needle, false);
     lv_obj_add_event_cb(ui.needle, draw_needle, LV_EVENT_DRAW_MAIN, NULL);
 
-    /* The reading sits under the hub, in the dial's open bottom. */
     ui.readout = ui_box(dial, LV_FLEX_FLOW_COLUMN, 0);
     lv_obj_set_width(ui.readout, LV_SIZE_CONTENT);
     lv_obj_set_flex_align(ui.readout, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -672,7 +633,6 @@ void speedtest_create(lv_obj_t *parent)
     lv_obj_set_size(ui.go, S(108), S(108));
     lv_obj_align(ui.go, LV_ALIGN_TOP_MID, 0, size / 2 - S(54));
     lv_obj_set_style_radius(ui.go, LV_RADIUS_CIRCLE, 0);
-    /* A hollow ring, as the speedtest.net app's GO. */
     lv_obj_set_style_border_width(ui.go, S(3), 0);
     lv_obj_set_style_border_color(ui.go, theme.accent, 0);
     lv_obj_set_style_bg_color(ui.go, theme.accent, LV_STATE_PRESSED);
@@ -685,7 +645,6 @@ void speedtest_create(lv_obj_t *parent)
     lv_obj_center(go);
     lv_obj_add_event_cb(ui.go, on_go, LV_EVENT_CLICKED, NULL);
     ui_focusable(ui.go);
-    /* The ring is already the accent; the key focus fills it instead. */
     lv_obj_set_style_outline_width(ui.go, 0, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_bg_color(ui.go, theme.accent, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_bg_opa(ui.go, LV_OPA_30, LV_STATE_FOCUS_KEY);
@@ -694,10 +653,8 @@ void speedtest_create(lv_obj_t *parent)
     lv_obj_t *where = ui_box(ui.root, LV_FLEX_FLOW_ROW, 10);
     lv_obj_set_style_pad_top(where, S(6), 0);
     ui.cells[0] = info(where, "user", &ui.isp, &ui.ip);
-    /* The server cell, which shows the backend before a test, switches it. */
     lv_obj_t *server = ui.cells[1] = info(where, "globe", &ui.sponsor, &ui.place);
-    /* Centred to the pixel, the content still reads right of centre in the focus box;
-     * more room on the right draws it back. */
+    /* Centred exactly, the content still looks right of centre in the focus box. */
     lv_obj_set_style_pad_right(server, S(12), 0);
     lv_obj_set_style_bg_color(server, theme.button, LV_STATE_PRESSED);
     lv_obj_set_style_bg_opa(server, LV_OPA_COVER, LV_STATE_PRESSED);

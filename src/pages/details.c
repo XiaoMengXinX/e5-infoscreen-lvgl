@@ -31,10 +31,10 @@ static void render(const cJSON *a)
     const cJSON *d = jget(a, "device"), *b = jget(a, "baseband"), *s = jget(a, "sim");
     bool radio_error = jtrue(a, "radio_error");
     lv_obj_set_hidden(ui.freshness, !radio_error);
-    ui_set_text(ui.model, jstr(d, "model") ? jstr(d, "model") : "--");
-    ui_set_text(ui.os, jstr(d, "os") ? jstr(d, "os") : "--");
-    ui_set_text(ui.image, jstr(d, "image") ? jstr(d, "image") : "--");
-    ui_set_text(ui.kernel, jstr(d, "kernel") ? jstr(d, "kernel") : "--");
+    ui_set_text(ui.model, jstr_or(d, "model", "--"));
+    ui_set_text(ui.os, jstr_or(d, "os", "--"));
+    ui_set_text(ui.image, jstr_or(d, "image", "--"));
+    ui_set_text(ui.kernel, jstr_or(d, "kernel", "--"));
     double used, total, v;
     if (jnum(d, "disk.used", &used) && jnum(d, "disk.total", &total)) {
         char u[24], t[24];
@@ -54,7 +54,7 @@ static void render(const cJSON *a)
         snprintf(text + len, sizeof text - len, "%s%.0f °C", len ? " · " : "", v);
     ui_set_text(ui.battery, *text ? text : "--");
 
-    const cJSON *temps = jget(d, "temperatures") ? jget(d, "temperatures") : jget(app.status, "system.temperatures");
+    const cJSON *temps = jget_or(d, "temperatures", jget(app.status, "system.temperatures"));
     for (int i = 0; i < 9; i++) {
         fmt_temp(jget(temps, temp_fields[i]), text, sizeof text);
         ui_set_text(ui.temps[i], text);
@@ -106,8 +106,8 @@ static void render(const cJSON *a)
     const cJSON *f;
     cJSON_ArrayForEach(f, jget(b, "firmware"))
         if (len < sizeof fw)
-            len += (size_t)snprintf(fw + len, sizeof fw - len, "%s%s: %s", len ? "\n" : "", jstr(f, "name") ? jstr(f, "name") : "",
-                                    jstr(f, "value") ? jstr(f, "value") : "");
+            len += (size_t)snprintf(fw + len, sizeof fw - len, "%s%s: %s", len ? "\n" : "", jstr_or(f, "name", ""),
+                                    jstr_or(f, "value", ""));
     ui_set_text(ui.firmware, fw);
 
     struct {
@@ -218,9 +218,9 @@ static void ids_loaded(int status, cJSON *r, void *ctx)
     if (!api_read_ok(status, r))
         return;
     show_ids = true;
-    ui_set_text(ui.imei, jstr(r, "imei") ? jstr(r, "imei") : "--");
-    ui_set_text(ui.iccid, jstr(r, "iccid") ? jstr(r, "iccid") : "--");
-    ui_set_text(ui.imsi, jstr(r, "imsi") ? jstr(r, "imsi") : "--");
+    ui_set_text(ui.imei, jstr_or(r, "imei", "--"));
+    ui_set_text(ui.iccid, jstr_or(r, "iccid", "--"));
+    ui_set_text(ui.imsi, jstr_or(r, "imsi", "--"));
     char numbers[128] = "";
     size_t len = 0;
     const cJSON *n;

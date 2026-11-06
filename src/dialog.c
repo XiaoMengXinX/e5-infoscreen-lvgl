@@ -1,5 +1,3 @@
-/* A sheet over the screen: a title, a note and a column of buttons. The keys
- * move between its buttons until it closes; a tap outside it closes it. */
 #include "app.h"
 #include "input.h"
 #include "theme.h"
@@ -62,7 +60,6 @@ void dialog_open(const char *title, const char *note)
     idle_reset();
 }
 
-/* A full-width button; the first one added takes the focus. */
 lv_obj_t *dialog_button(const char *text, lv_event_cb_t cb, void *ctx)
 {
     lv_group_t *outer = lv_group_get_default();

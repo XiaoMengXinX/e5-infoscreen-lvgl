@@ -91,7 +91,7 @@ static void usage_done(int status, cJSON *reply, void *ctx)
     usage_busy = false;
     if ((unsigned)(uintptr_t)ctx == usage_generation) {
         cJSON_Delete(usage);
-        const cJSON *source = jget(reply, "wan") ? jget(reply, "wan") : reply;
+        const cJSON *source = jget_or(reply, "wan", reply);
         usage = status == 200 && source ? cJSON_Duplicate(source, true) : NULL;
     }
     if (ui.root)
@@ -130,7 +130,6 @@ static void anim_y(void *obj, int32_t v)
     lv_obj_set_style_translate_y(obj, v, 0);
 }
 
-/* A drag that does not unlock springs back rather than snapping. */
 static void reset_gesture(void)
 {
     gesture.active = false;
@@ -175,8 +174,6 @@ static void unlock_done(lv_anim_t *a)
 static void unlock(float velocity);
 static void apply_config(void);
 
-/* Holding * and # for a second, and no other key, unlocks, unless the setting turns
- * it off. */
 static bool keys_on = true;
 static struct {
     bool star, pound, ok, ok_alone;
@@ -187,7 +184,7 @@ static struct {
 static void hold_done(lv_timer_t *t)
 {
     hold.timer = NULL;
-    if (locked && !dark)
+    if (locked)
         unlock(0);
 }
 
@@ -206,13 +203,11 @@ void lock_key_held(const struct key_event *key)
         return;
     bool ok = key->kind == KEY_KIND_OK;
     if (ok && key->down) {
-        /* With touch off, OK pressed twice unlocks: each press counts only on
-         * its release, and only if no other key was down at any point of it.
-         * Any other key in between starts the count over. */
+        /* A press counts on release, and only if no other key was down during it. */
         hold.ok_alone = locked && !dark && jfalse(screen_config(), "touch") && lv_tick_elaps(wake_at) >= 400 &&
                         !hold.star && !hold.pound && !hold.others;
     } else if (ok) {
-        if (hold.ok_alone && locked && !dark) {
+        if (hold.ok_alone && locked) {
             if (key_armed && lv_tick_elaps(key_armed) < 1800) {
                 unlock(0);
             } else {
@@ -430,7 +425,7 @@ void lock_create(void)
     char keys[4];
     screen_option("lock_keys", keys, sizeof keys);
     keys_on = strcmp(keys, "0") != 0;
-    /* The lock keeps its layout at the standard size so it always fits the panel. */
+    /* The standard size, so the lock always fits the panel. */
     float scale = theme_cap(1);
     int32_t height = screen_height() - shell_status_bar_height();
     /* The lock slides up inside this window, which keeps the status bar clear. */
@@ -529,9 +524,8 @@ void lock_engage(void)
     wake_at = lv_tick_get();
     key_armed = 0;
     hold_reset();
-    /* The keyboard is drawn above the lock, so an open field must give it up. */
+    /* The keyboard and dialogs are drawn above the lock. */
     input_defocus();
-    /* So is a dialog, which the lock would leave open on top of it. */
     dialog_close();
     if (phone_is_open() && !phone_call_active())
         phone_close();
@@ -568,7 +562,7 @@ void lock_status(const cJSON *st)
     if (dark || !ui.root)
         return;
     apply_config();
-    bool bytes = jstr(c, "speed_unit") && !strcmp(jstr(c, "speed_unit"), "bytes");
+    bool bytes = jstr_is(c, "speed_unit", "bytes");
     lv_obj_t **targets[2] = {ui.rx, ui.tx};
     static const char *const rates[2] = {"traffic.rx_rate", "traffic.tx_rate"};
     for (int i = 0; i < 2; i++) {

@@ -227,7 +227,6 @@ static void battery_draw(lv_event_t *e)
     if (fill.x2 >= fill.x1)
         lv_draw_rect(lv_event_get_layer(e), &dsc, &fill);
     if (level & 0x400) {
-        /* The web page's bolt, 9 × 13 over the battery, outlined in the bar colour. */
         lv_draw_image_dsc_t img;
         lv_draw_image_dsc_init(&img);
         img.recolor_opa = LV_OPA_COVER;
@@ -555,7 +554,6 @@ static void on_nav(lv_event_t *e)
             lv_anim_delete(ui.nav_pill, pill_x);
             lv_obj_set_hidden(ui.nav_pill, false);
             lv_obj_t *b = ui.nav_buttons[0];
-            /* The pill swells while it is held. */
             lv_obj_set_size(ui.nav_pill, lv_obj_get_width(b) + S(10), lv_obj_get_height(b) + S(4));
             lv_obj_set_y(ui.nav_pill, lv_obj_get_y(b) - S(2));
         }
@@ -727,7 +725,7 @@ static void back(void)
 static int signal_bars(const cJSON *sim)
 {
     double rsrp;
-    if (!sim || jtrue(sim, "stale") || (jget(sim, "error") && !cJSON_IsNull(jget(sim, "error"))) ||
+    if (!sim || jtrue(sim, "stale") || jhas(sim, "error") ||
         !jnum(sim, "signal.rsrp", &rsrp))
         return 0;
     return rsrp >= -90 ? 4 : rsrp >= -100 ? 3 : rsrp >= -110 ? 2 : 1;
@@ -857,7 +855,7 @@ static bool listed(char list[][96], int count, const char *key)
 
 static void note_key(const cJSON *n, char *out)
 {
-    const char *plugin = jstr(n, "plugin") ? jstr(n, "plugin") : "";
+    const char *plugin = jstr_or(n, "plugin", "");
     const cJSON *id = jget(n, "id");
     if (cJSON_IsNumber(id))
         snprintf(out, 96, "%s/%g", plugin, id->valuedouble);
@@ -894,7 +892,7 @@ static void notice_render(void)
     note_key(n, notes.key);
     const char *title = jlabel(jget(n, "title"));
     ui_set_text(ui.notice_title, *title ? title : L("应用通知", "App notification"));
-    ui_set_text(ui.notice_body, jstr(n, "body") ? jstr(n, "body") : "");
+    ui_set_text(ui.notice_body, jstr_or(n, "body", ""));
 }
 
 static void notice_dismiss(lv_event_t *e)
@@ -920,7 +918,7 @@ static void notifications(const cJSON *list)
     const cJSON *n;
     cJSON_ArrayForEach(n, list) {
         const char *id = jstr(n, "id");
-        if (jstr(n, "plugin") && !strcmp(jstr(n, "plugin"), "phone") && id && !strncmp(id, "call-", 5))
+        if (jstr_is(n, "plugin", "phone") && id && !strncmp(id, "call-", 5))
             continue;
         cJSON_AddItemToArray(filtered, cJSON_Duplicate(n, true));
     }
@@ -974,7 +972,6 @@ static void reconcile_power(const cJSON *st)
     }
 }
 
-/* Language, theme and navigation slots decide how the shell is built. */
 static bool apply_screen(void)
 {
     const cJSON *screen = screen_config();
@@ -1172,7 +1169,6 @@ static void focus_move(int dir)
     }
 }
 
-/* The on-screen keyboard belongs to the focused input field. */
 static bool field_focused(void)
 {
     return lv_obj_check_type(lv_group_get_focused(input_group()), &lv_textarea_class);
@@ -1528,7 +1524,6 @@ static void build_nav(void)
     lv_obj_set_clickable(ui.nav, true);
     lv_obj_add_event_cb(ui.nav, on_nav, LV_EVENT_ALL, NULL);
 
-    /* Translucent glass: a lighter top edge fading down, and a thin rim. */
     ui.nav_pill = lv_obj_create(ui.nav);
     lv_obj_remove_style_all(ui.nav_pill);
     lv_obj_set_floating(ui.nav_pill, true);
@@ -1574,7 +1569,6 @@ static void build_menu(void)
     tool_button(head, "close", 40, on_menu);
     lv_obj_t *grid = ui_box(ui.menu, LV_FLEX_FLOW_ROW_WRAP, 8);
     int32_t cell = (lv_display_get_horizontal_resolution(lv_display_get_default()) - 2 * 14 - 2 * S(8)) / 3;
-    /* In page order, the same order the number keys select. */
     for (int page = 0; page < PAGE_COUNT; page++) {
         lv_obj_t *b = page_button(grid, page, cell);
         lv_obj_set_height(b, S(70));

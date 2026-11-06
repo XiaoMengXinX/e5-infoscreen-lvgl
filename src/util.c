@@ -46,6 +46,30 @@ const char *jstr(const cJSON *object, const char *path)
     return cJSON_IsString(item) ? item->valuestring : NULL;
 }
 
+bool jhas(const cJSON *object, const char *path)
+{
+    const cJSON *item = jget(object, path);
+    return item && !cJSON_IsNull(item);
+}
+
+const char *jstr_or(const cJSON *object, const char *path, const char *fallback)
+{
+    const char *s = jstr(object, path);
+    return s ? s : fallback;
+}
+
+bool jstr_is(const cJSON *object, const char *path, const char *value)
+{
+    const char *s = jstr(object, path);
+    return s && !strcmp(s, value);
+}
+
+const cJSON *jget_or(const cJSON *object, const char *path, const cJSON *fallback)
+{
+    const cJSON *item = jget(object, path);
+    return item ? item : fallback;
+}
+
 /* JavaScript truthiness for the backend's booleans, which ucode may send as 0/1. */
 bool jtrue(const cJSON *object, const char *path)
 {
@@ -63,7 +87,7 @@ const char *jlabel(const cJSON *label)
     if (cJSON_IsString(label))
         return label->valuestring;
     const char *text = jstr(label, app.en ? "en" : "zh");
-    return text ? text : jstr(label, "zh") ? jstr(label, "zh") : "";
+    return text ? text : jstr_or(label, "zh", "");
 }
 
 void error_text(const char *in, char *out, size_t size)
@@ -277,7 +301,9 @@ void battery_text(const cJSON *b, char *out, size_t size)
 
 void usb_device_name(const cJSON *d, char *out, size_t size)
 {
-    const char *name = jstr(d, "name") && *jstr(d, "name") ? jstr(d, "name") : "USB";
+    const char *name = jstr_or(d, "name", "");
+    if (!*name)
+        name = "USB";
     const char *kind = jstr(d, "kind");
     if (!kind || strcmp(kind, "ethernet"))
         snprintf(out, size, "%s", name);
