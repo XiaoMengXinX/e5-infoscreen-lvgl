@@ -436,6 +436,8 @@ void lock_engage(void)
     key_armed = 0;
     /* The keyboard is drawn above the lock, so an open field must give it up. */
     input_defocus();
+    /* So is a dialog, which the lock would leave open on top of it. */
+    dialog_close();
     if (phone_is_open() && !phone_call_active())
         phone_close();
     gesture.active = false;
