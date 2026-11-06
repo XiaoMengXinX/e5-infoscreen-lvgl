@@ -3,6 +3,7 @@
 
 #include "api.h"
 #include "app.h"
+#include "input.h"
 #include "theme.h"
 #include "ui.h"
 #include "util.h"
@@ -60,8 +61,33 @@ static void meta(const cJSON *m, char *out, size_t size)
 
 static void on_open(lv_event_t *e);
 
+/* The message the keys are on, by id, or -1; a rebuilt list puts them back on it. */
+static double focused_message(bool *keyed)
+{
+    lv_obj_t *focused = input_group() ? lv_group_get_focused(input_group()) : NULL;
+    if (!focused || lv_obj_get_parent(focused) != ui.list)
+        return -1;
+    *keyed = lv_obj_has_state(focused, LV_STATE_FOCUS_KEY);
+    return (double)(intptr_t)lv_obj_get_user_data(focused);
+}
+
+static void refocus_message(double id, bool keyed)
+{
+    for (uint32_t i = 0; i < lv_obj_get_child_count(ui.list); i++) {
+        lv_obj_t *row = lv_obj_get_child(ui.list, (int32_t)i);
+        if ((double)(intptr_t)lv_obj_get_user_data(row) == id) {
+            lv_group_focus_obj(row);
+            if (keyed)
+                lv_obj_add_state(row, LV_STATE_FOCUS_KEY);
+            return;
+        }
+    }
+}
+
 static void render_list(void)
 {
+    bool keyed = false;
+    double focused = focused_message(&keyed);
     lv_obj_clean(ui.list);
     if (!cJSON_GetArraySize(messages)) {
         lv_obj_t *card = ui_card(ui.list);
@@ -106,6 +132,8 @@ static void render_list(void)
         lv_obj_set_user_data(row, (void *)(intptr_t)id);
         ui_focusable(row);
     }
+    if (focused >= 0)
+        refocus_message(focused, keyed);
 }
 
 static void disarm(void)
