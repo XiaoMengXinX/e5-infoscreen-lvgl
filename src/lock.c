@@ -176,6 +176,7 @@ static void unlock(float velocity);
 
 /* Holding * and # for a second, and no other key, unlocks, unless the setting turns
  * it off. */
+static bool keys_on = true;
 static struct {
     bool star, pound;
     int others;
@@ -208,7 +209,7 @@ void lock_key_held(const struct key_event *key)
         hold.pound = key->down;
     else
         hold.others = key->down ? hold.others + 1 : LV_MAX(hold.others - 1, 0);
-    bool both = locked && !dark && hold.star && hold.pound && !hold.others && !jfalse(screen_config(), "lock_keys");
+    bool both = locked && !dark && hold.star && hold.pound && !hold.others && keys_on;
     if (both && !hold.timer) {
         hold.timer = lv_timer_create(hold_done, 1000, NULL);
         lv_timer_set_repeat_count(hold.timer, 1);
@@ -377,17 +378,31 @@ static void apply_config(void)
     lv_obj_set_hidden(ui.rates, !speed);
     if (key_armed)
         return;
-    bool keys = !jfalse(c, "lock_keys");
     if (jfalse(c, "touch"))
-        ui_set_text(ui.hint, keys ? L("触控已关闭 · 按两次确认键或长按 * 和 # 解锁", "Touch off · press OK twice, or hold * and #")
+        ui_set_text(ui.hint, keys_on ? L("触控已关闭 · 按两次确认键或长按 * 和 # 解锁", "Touch off · press OK twice, or hold * and #")
                                   : L("触控已关闭 · 按两次确认键解锁", "Touch off · press OK twice"));
     else
-        ui_set_text(ui.hint, keys ? L("上滑或长按 * 和 # 解锁", "Swipe up, or hold * and #, to unlock")
+        ui_set_text(ui.hint, keys_on ? L("上滑或长按 * 和 # 解锁", "Swipe up, or hold * and #, to unlock")
                                   : L("从下方向上滑动解锁", "Swipe up to unlock"));
+}
+
+bool lock_keys_enabled(void)
+{
+    return keys_on;
+}
+
+void lock_set_keys(bool on)
+{
+    keys_on = on;
+    if (ui.root)
+        apply_config();
 }
 
 void lock_create(void)
 {
+    char keys[4];
+    screen_option("lock_keys", keys, sizeof keys);
+    keys_on = strcmp(keys, "0") != 0;
     /* The lock keeps its layout at the standard size so it always fits the panel. */
     float scale = theme_cap(1);
     int32_t height = screen_height() - shell_status_bar_height();

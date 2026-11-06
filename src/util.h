@@ -28,6 +28,11 @@ const char *charge_state(const cJSON *battery);
 void battery_text(const cJSON *battery, char *out, size_t size);
 void usb_device_name(const cJSON *device, char *out, size_t size);
 
+/* The screen's own options, kept in UCI as e5-infoscreen.main.<name>. Reading one
+ * gives an empty string when it is not set. */
+void screen_option(const char *name, char *out, size_t size);
+void screen_option_set(const char *name, const char *value);
+
 struct local_time {
     int year, month, day, hour, minute, second;
 };

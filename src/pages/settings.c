@@ -1,8 +1,10 @@
 /* Settings are described by /api/settings; this page renders that model as a
  * stack of views: menu → category → editor, plus the dedicated views below. */
+#include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "api.h"
 #include "app.h"
@@ -311,6 +313,110 @@ static void open_editor(struct view *v, const cJSON *it);
 /* An item to open as soon as its category has loaded. */
 static char open_item[64];
 
+/* ---------- the screen's own items ---------- */
+
+/* Items the screen handles itself, added to the backend's categories, so a device
+ * has them whatever backend it runs. They carry "local" and never reach the API. */
+#define TOUCH_DRIVER "/sys/bus/i2c/drivers/lym10k-touch"
+
+static cJSON *local_item(const char *id, const char *type, const char *zh, const char *en, const char *note_zh,
+                         const char *note_en)
+{
+    cJSON *it = cJSON_CreateObject();
+    cJSON_AddStringToObject(it, "id", id);
+    cJSON_AddStringToObject(it, "type", type);
+    cJSON *label = cJSON_AddObjectToObject(it, "label");
+    cJSON_AddStringToObject(label, "zh", zh);
+    cJSON_AddStringToObject(label, "en", en);
+    cJSON *note = cJSON_AddObjectToObject(it, "note");
+    cJSON_AddStringToObject(note, "zh", note_zh);
+    cJSON_AddStringToObject(note, "en", note_en);
+    cJSON_AddBoolToObject(it, "local", true);
+    return it;
+}
+
+/* Where the item with this id sits, or the end of the list without one. */
+static int item_index(const cJSON *items, const char *id)
+{
+    int i = 0;
+    const cJSON *it;
+    cJSON_ArrayForEach(it, items) {
+        if (jstr(it, "id") && !strcmp(jstr(it, "id"), id))
+            return i;
+        i++;
+    }
+    return i;
+}
+
+static void add_local_items(cJSON *items, const char *cat)
+{
+    if (!strcmp(cat, "ui")) {
+        cJSON *keys = local_item("lock_keys", "toggle", "长按 * 和 # 解锁", "Hold * and # to unlock",
+                                 "只按这两个键，按住约 1 秒", "These two keys alone, for about a second");
+        cJSON_AddBoolToObject(keys, "value", lock_keys_enabled());
+        int at = item_index(items, "lock_enabled");
+        if (at < cJSON_GetArraySize(items))
+            at++;
+        cJSON_InsertItemInArray(items, at, keys);
+    } else if (!strcmp(cat, "system")) {
+        cJSON *restart = local_item("ui_restart", "action", "重启界面", "Restart the screen",
+                                    "只重启信息屏界面，网络不受影响", "The screen only; the network stays up");
+        cJSON_AddBoolToObject(restart, "confirm", true);
+        cJSON_InsertItemInArray(items, item_index(items, "reboot"), restart);
+        if (!access(TOUCH_DRIVER, F_OK)) {
+            cJSON *touch = local_item("touch_reset", "action", "重置触摸", "Reset touch",
+                                      "触摸没有反应时使用；重置后界面会重启",
+                                      "When touch stops responding; the screen restarts after");
+            cJSON_AddBoolToObject(touch, "confirm", true);
+            cJSON_InsertItemInArray(items, item_index(items, "reboot"), touch);
+        }
+    }
+}
+
+/* Rebinding the touch driver resets its controller and registers a new input
+ * device, which the screen opens as it restarts. */
+static bool touch_rebind(void)
+{
+    DIR *dir = opendir(TOUCH_DRIVER);
+    if (!dir)
+        return false;
+    bool ok = true;
+    struct dirent *e;
+    while ((e = readdir(dir))) {
+        /* The bound devices are the i2c names, bus-address: "3-0015". */
+        if (e->d_name[0] < '0' || e->d_name[0] > '9' || !strchr(e->d_name, '-'))
+            continue;
+        for (int i = 0; i < 2 && ok; i++) {
+            FILE *f = fopen(i ? TOUCH_DRIVER "/bind" : TOUCH_DRIVER "/unbind", "w");
+            ok = f && fputs(e->d_name, f) >= 0;
+            if (f)
+                ok = fclose(f) == 0 && ok;
+        }
+    }
+    closedir(dir);
+    return ok;
+}
+
+static void local_save(const cJSON *it, const cJSON *value)
+{
+    const char *id = jstr(it, "id");
+    if (!strcmp(id, "lock_keys")) {
+        bool on = cJSON_IsTrue(value);
+        screen_option_set("lock_keys", on ? "1" : "0");
+        lock_set_keys(on);
+        cJSON_ReplaceItemInObject((cJSON *)it, "value", cJSON_CreateBool(on));
+        toast("%s", L("已保存", "Saved"));
+        render();
+        return;
+    }
+    if (!strcmp(id, "touch_reset") && !touch_rebind()) {
+        toast("%s", L("重置触摸失败", "Touch reset failed"));
+        return;
+    }
+    toast("%s", L("执行中…", "Running…"));
+    system("/etc/init.d/e5-infoscreen restart >/dev/null 2>&1 &");
+}
+
 /* Loaded into v->data: the category's items, a list, or a whole document. */
 static void data_loaded(int status, cJSON *r, void *ctx)
 {
@@ -327,6 +433,8 @@ static void data_loaded(int status, cJSON *r, void *ctx)
         v->data = cJSON_Duplicate(field ? jget(r, field) : r, true);
         if (field && !v->data)
             v->data = cJSON_CreateArray();
+        if (v->kind == V_CAT)
+            add_local_items(v->data, v->cat);
     }
     if (v != top())
         return;
@@ -507,6 +615,11 @@ static void posted(int status, cJSON *r, void *ctx)
 
 static void save(struct view *v, const char *id, const cJSON *value)
 {
+    const cJSON *target = item(v, id);
+    if (jtrue(target, "local")) {
+        local_save(target, value);
+        return;
+    }
     struct post *p = calloc(1, sizeof *p);
     p->serial = v->serial;
     snprintf(p->id, sizeof p->id, "%s", id);

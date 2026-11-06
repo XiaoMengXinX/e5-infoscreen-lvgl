@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 
@@ -284,4 +285,25 @@ void usb_device_name(const cJSON *d, char *out, size_t size)
         snprintf(out, size, "%s", L("USB 网卡", "USB Ethernet"));
     else
         snprintf(out, size, "%s · %s", L("USB 网卡", "USB Ethernet"), name);
+}
+
+void screen_option(const char *name, char *out, size_t size)
+{
+    char command[128];
+    snprintf(command, sizeof command, "uci -q get e5-infoscreen.main.%s", name);
+    *out = 0;
+    FILE *f = popen(command, "r");
+    if (!f)
+        return;
+    if (!fgets(out, (int)size, f))
+        *out = 0;
+    pclose(f);
+    out[strcspn(out, "\n")] = 0;
+}
+
+void screen_option_set(const char *name, const char *value)
+{
+    char command[160];
+    snprintf(command, sizeof command, "uci set e5-infoscreen.main.%s=%s && uci commit e5-infoscreen", name, value);
+    system(command);
 }

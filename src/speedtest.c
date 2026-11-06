@@ -21,6 +21,7 @@
 #include "icons.h"
 #include "theme.h"
 #include "ui.h"
+#include "util.h"
 
 /* Installs the latest release's arm64 archive. jsDelivr names the version; the
  * archive comes through GitHub proxies reachable from mainland China, then from
@@ -59,7 +60,6 @@ static const struct backend backends[] = {
     {"speedtest", "speedtest.net", "speedtest.net", "/usr/bin/speedtest-go", NULL},
 };
 #define BACKENDS ((int)(sizeof backends / sizeof *backends))
-#define BACKEND_OPTION "e5-infoscreen.main.speedtest_backend"
 static const struct backend *backend = &backends[0];
 
 /* Gauge marks, evenly spaced around the dial as on the speedtest.net app. */
@@ -495,14 +495,8 @@ bool speedtest_running(void)
 
 static void load_backend(void)
 {
-    char id[32] = "";
-    FILE *f = popen("uci -q get " BACKEND_OPTION, "r");
-    if (f) {
-        if (!fgets(id, sizeof id, f))
-            *id = 0;
-        pclose(f);
-    }
-    id[strcspn(id, "\n")] = 0;
+    char id[32];
+    screen_option("speedtest_backend", id, sizeof id);
     for (int i = 0; i < BACKENDS; i++)
         if (!strcmp(id, backends[i].id))
             backend = &backends[i];
@@ -512,9 +506,7 @@ static void on_backend(lv_event_t *e)
 {
     backend = lv_event_get_user_data(e);
     dialog_close();
-    char command[128];
-    snprintf(command, sizeof command, "uci set " BACKEND_OPTION "=%s && uci commit e5-infoscreen", backend->id);
-    system(command);
+    screen_option_set("speedtest_backend", backend->id);
     speedtest_reset();
 }
 

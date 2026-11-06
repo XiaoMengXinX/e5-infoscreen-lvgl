@@ -108,6 +108,9 @@ void lock_power(bool blank);
 bool lock_key(const struct key_event *key);
 /* Every key press and release, for the * and # unlock. */
 void lock_key_held(const struct key_event *key);
+/* The * and # unlock's setting, which the screen keeps itself (UCI lock_keys). */
+bool lock_keys_enabled(void);
+void lock_set_keys(bool on);
 void lock_refresh_usage(void);
 
 /* power_menu.c */
