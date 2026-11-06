@@ -111,6 +111,46 @@ void input_focus_move(lv_group_t *group, int dir)
         lv_obj_add_state(focused, LV_STATE_FOCUS_KEY);
 }
 
+static bool shown(lv_obj_t *obj)
+{
+    for (; obj; obj = lv_obj_get_parent(obj))
+        if (lv_obj_is_hidden(obj))
+            return false;
+    return true;
+}
+
+void input_focus_toward(lv_group_t *group, int dx, int dy)
+{
+    lv_obj_t *from = lv_group_get_focused(group);
+    if (!from || !lv_obj_has_state(from, LV_STATE_FOCUS_KEY) || !shown(from)) {
+        input_focus_move(group, dx + dy < 0 ? -1 : 1);
+        return;
+    }
+    lv_area_t a;
+    lv_obj_get_coords(from, &a);
+    int32_t fx = (a.x1 + a.x2) / 2, fy = (a.y1 + a.y2) / 2;
+    lv_obj_t *best = NULL;
+    int64_t best_score = 0;
+    for (lv_obj_t **o = lv_ll_get_head(&group->obj_ll); o; o = lv_ll_get_next(&group->obj_ll, o)) {
+        if (*o == from || !shown(*o) || lv_obj_has_state(*o, LV_STATE_DISABLED))
+            continue;
+        lv_obj_get_coords(*o, &a);
+        int32_t cx = (a.x1 + a.x2) / 2, cy = (a.y1 + a.y2) / 2;
+        int32_t along = dx ? (cx - fx) * dx : (cy - fy) * dy;
+        int32_t across = dx ? LV_ABS(cy - fy) : LV_ABS(cx - fx);
+        int64_t score = (int64_t)along + 2 * (int64_t)across;
+        if (along > 0 && (!best || score < best_score)) {
+            best = *o;
+            best_score = score;
+        }
+    }
+    if (!best)
+        return;
+    lv_group_focus_obj(best);
+    lv_obj_add_state(best, LV_STATE_FOCUS_KEY);
+    lv_obj_scroll_to_view_recursive(best, LV_ANIM_ON);
+}
+
 void input_set_group(lv_group_t *group)
 {
     lv_indev_set_group(keypad_indev, group);

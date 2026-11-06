@@ -18,5 +18,8 @@ void input_defocus(void);
 /* Moves a group's focus for the arrow keys and shows it; the first press only
  * reveals the focus already there. */
 void input_focus_move(lv_group_t *group, int dir);
+/* Moves the focus to the nearest object of the group that way on screen, for
+ * layouts read as a grid; with nothing shown focused it acts as input_focus_move. */
+void input_focus_toward(lv_group_t *group, int dx, int dy);
 void input_set_group(lv_group_t *group);
 lv_group_t *input_group(void);

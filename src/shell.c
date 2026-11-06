@@ -1148,7 +1148,13 @@ static void focus_move(int dir)
 {
     lv_group_t *group = input_group();
     lv_obj_t *page = ui.pages[app.page];
-    struct focus_scan scan = {.group = group, .current = lv_group_get_focused(group), .dir = dir};
+    /* LVGL focuses the first object a group gets, unmarked, and a view that
+     * opens over another leaves the focus behind on it: neither is a focus. */
+    lv_obj_t *current = lv_group_get_focused(group);
+    for (lv_obj_t *o = current; o && current; o = lv_obj_get_parent(o))
+        if (lv_obj_is_hidden(o) || !lv_obj_has_state(current, LV_STATE_FOCUS_KEY))
+            current = NULL;
+    struct focus_scan scan = {.group = group, .current = current, .dir = dir};
     if (scan.current)
         scan.current_pos = focus_pos(scan.current);
     else

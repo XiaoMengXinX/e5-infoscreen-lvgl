@@ -19,7 +19,7 @@
 
 static struct {
     lv_obj_t *root, *body;
-    lv_obj_t *number, *placeholder, *dial, *erase, *sims[2];
+    lv_obj_t *number, *placeholder, *dial, *erase, *pad, *sims[2];
     lv_obj_t *call_state, *call_name, *call_sim, *duration, *choices, *avatar, *controls;
     lv_obj_t *accept, *hangup, *route, *mute, *keys, *keypad, *digits;
     lv_obj_t *sheet;
@@ -613,6 +613,11 @@ static lv_obj_t *circle(lv_obj_t *parent, int size, const char *icon, lv_color_t
     lv_obj_t *glyph = icon_create(b, icon, S(size * 2 / 5));
     lv_obj_set_style_text_color(glyph, fg, 0);
     lv_obj_center(glyph);
+    /* As on a primary button: a ring in the text color with a dark gap, since
+     * the dial key is the accent itself. */
+    lv_obj_set_style_outline_color(b, theme.text, LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_border_color(b, theme.bg, LV_STATE_FOCUS_KEY);
+    lv_obj_set_style_border_width(b, 2 + S(3), LV_STATE_FOCUS_KEY);
     return b;
 }
 
@@ -636,7 +641,7 @@ static void control_set(lv_obj_t *column, const char *caption, bool on, bool dis
     ui_set_text(lv_obj_get_child(column, 1), caption);
 }
 
-static void keypad(lv_obj_t *parent, lv_event_cb_t cb, bool letters)
+static lv_obj_t *keypad(lv_obj_t *parent, lv_event_cb_t cb, bool letters)
 {
     static const char keys[] = "123456789*0#";
     static const char *const sub[] = {"", "ABC", "DEF", "GHI", "JKL", "MNO", "PQRS", "TUV", "WXYZ", "", "+", ""};
@@ -666,6 +671,7 @@ static void keypad(lv_obj_t *parent, lv_event_cb_t cb, bool letters)
         if (keys[i] == '0' && letters)
             lv_obj_add_event_cb(b, on_zero, LV_EVENT_ALL, NULL);
     }
+    return pad;
 }
 
 static void build_dialer(void)
@@ -695,7 +701,7 @@ static void build_dialer(void)
     lv_obj_set_style_text_align(ui.number, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_letter_space(ui.number, 1, 0);
     lv_label_set_long_mode(ui.number, LV_LABEL_LONG_MODE_CLIP);
-    keypad(ui.body, on_key, true);
+    ui.pad = keypad(ui.body, on_key, true);
     lv_obj_t *actions = ui_box(ui.body, LV_FLEX_FLOW_ROW, 0);
     lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_t *spacer = lv_obj_create(actions);
@@ -860,7 +866,7 @@ static void build(void)
     if (!ui.root)
         return;
     lv_obj_clean(ui.body);
-    ui.call_state = ui.placeholder = NULL;
+    ui.call_state = ui.placeholder = ui.pad = NULL;
     lv_group_remove_all_objs(group);
     lv_group_t *previous = lv_group_get_default();
     lv_group_set_default(group);
@@ -938,6 +944,8 @@ void phone_open(void)
     input_set_group(group);
     mount(call_only || current());
     render();
+    /* Opened by a key, LVGL marks the first button it focuses as key focused. */
+    input_defocus();
     shell_title();
     read_status();
     idle_reset();
@@ -955,6 +963,19 @@ void phone_close(void)
     input_set_group(outer_group);
     shell_title();
     idle_reset();
+}
+
+/* The focus the keys show; LVGL's own first focus is not one. */
+static lv_obj_t *key_focus(void)
+{
+    lv_obj_t *focused = lv_group_get_focused(group);
+    return focused && lv_obj_has_state(focused, LV_STATE_FOCUS_KEY) ? focused : NULL;
+}
+
+static void focus(lv_obj_t *obj)
+{
+    lv_group_focus_obj(obj);
+    lv_obj_add_state(obj, LV_STATE_FOCUS_KEY);
 }
 
 bool phone_key(const struct key_event *key)
@@ -1020,19 +1041,36 @@ bool phone_key(const struct key_event *key)
             phone_close();
         }
         return true;
+    /* The dialer opens with no focus, for the number keys; Up then picks the
+     * SIM switch and Down the keypad's 1. */
     case KEY_KIND_OK:
-        if (lv_group_get_focused(group))
+        if (key_focus())
             input_focus_key(LV_KEY_ENTER);
-        else
+        else if (c)
             input_focus_move(group, 1);
         return true;
     case KEY_KIND_UP:
-    case KEY_KIND_LEFT:
-        input_focus_move(group, -1);
+        if (!c && !key_focus())
+            focus(ui.sims[card]);
+        else
+            input_focus_toward(group, 0, -1);
         return true;
-    case KEY_KIND_DOWN:
+    case KEY_KIND_DOWN: {
+        lv_obj_t *focused = key_focus();
+        if (!c && !focused)
+            focus(lv_obj_get_child(ui.pad, 0));
+        /* From * 0 and # the dial key is the way down, whichever is nearer. */
+        else if (!c && lv_obj_get_parent(focused) == ui.pad && lv_obj_get_index(focused) >= 9)
+            focus(ui.dial);
+        else
+            input_focus_toward(group, 0, 1);
+        return true;
+    }
+    case KEY_KIND_LEFT:
+        input_focus_toward(group, -1, 0);
+        return true;
     case KEY_KIND_RIGHT:
-        input_focus_move(group, 1);
+        input_focus_toward(group, 1, 0);
         return true;
     case KEY_KIND_MENU:
         if (c)
