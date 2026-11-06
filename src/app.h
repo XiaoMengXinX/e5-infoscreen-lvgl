@@ -63,7 +63,6 @@ struct app {
     cJSON *status;
     bool en;
     bool blank;
-    bool keylock;
     enum page page;
     int brightness;
 };
@@ -107,6 +106,8 @@ void lock_status(const cJSON *st);
 void lock_clock(void);
 void lock_power(bool blank);
 bool lock_key(const struct key_event *key);
+/* Every key press and release, for the * and # unlock. */
+void lock_key_held(const struct key_event *key);
 void lock_refresh_usage(void);
 
 /* power_menu.c */

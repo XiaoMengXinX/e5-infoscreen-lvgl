@@ -74,7 +74,6 @@ static struct {
 static struct {
     lv_timer_t *timer;
     bool fired;
-    uint32_t last_press;
 } power_key;
 static uint32_t last_back;
 static uint32_t last_step, last_focus;
@@ -385,7 +384,7 @@ static void render_status(void);
 
 void screen_set_blank(bool blank)
 {
-    if (blank == app.blank || (!blank && app.keylock))
+    if (blank == app.blank)
         return;
     app.blank = blank;
     blank_changed_at = lv_tick_get();
@@ -402,7 +401,7 @@ void screen_set_blank(bool blank)
 
 bool shell_touch_allowed(void)
 {
-    return !app.blank && !app.keylock && !jfalse(screen_config(), "touch") && !lock_touch_blocked();
+    return !app.blank && !jfalse(screen_config(), "touch") && !lock_touch_blocked();
 }
 
 /* ---------- pages ---------- */
@@ -881,7 +880,7 @@ static const cJSON *notice_current(void)
 static void notice_render(void)
 {
     const cJSON *n = notice_current();
-    bool hidden = !n || app.blank || app.keylock || lock_active() || phone_is_open() ||
+    bool hidden = !n || app.blank || lock_active() || phone_is_open() ||
                   !lv_obj_is_hidden(ui.picture);
     if (hidden != lv_obj_is_hidden(ui.notice)) {
         lv_obj_set_hidden(ui.notice, hidden);
@@ -945,7 +944,7 @@ static void notifications(const cJSON *list)
     notes.dismissed_count = kept;
     memcpy(notes.seen, seen, sizeof seen);
     notes.seen_count = seen_count;
-    if (fresh_wake && app.blank && !app.keylock)
+    if (fresh_wake && app.blank)
         screen_set_blank(false);
     notice_render();
 }
@@ -1181,6 +1180,7 @@ static bool field_focused(void)
 
 void shell_key(const struct key_event *key)
 {
+    lock_key_held(key);
     if (key->kind == KEY_KIND_VOLUP || key->kind == KEY_KIND_VOLDOWN) {
         int step = key->kind == KEY_KIND_VOLUP ? 1 : -1;
         /* Both keys together: a press takes a screenshot, a hold offers screen
@@ -1215,7 +1215,6 @@ void shell_key(const struct key_event *key)
     }
     if (key->kind == KEY_KIND_POWER) {
         if (key->down && !key->repeat) {
-            power_key.last_press = lv_tick_get();
             if (phone_key(key))
                 return;
             power_key.fired = false;
@@ -1227,28 +1226,14 @@ void shell_key(const struct key_event *key)
                 return;
             if (power_menu_is_open())
                 power_menu_close();
-            else if (!app.keylock)
+            else
                 screen_set_blank(!app.blank);
         }
         return;
     }
     if (!key->down)
         return;
-    if (key->kind == KEY_KIND_CHAR && key->ch == '*' && lv_tick_elaps(power_key.last_press) < 2000 && !key->repeat) {
-        power_key.last_press = 0;
-        app.keylock = !app.keylock;
-        if (app.keylock) {
-            screen_set_blank(true);
-            cJSON *body = cJSON_CreateObject();
-            cJSON_AddNumberToObject(body, "ms", 80);
-            api_post("/vibrate", body, NULL, NULL);
-        } else {
-            screen_set_blank(false);
-            toast("%s", L("已解锁", "Unlocked"));
-        }
-        return;
-    }
-    if (app.keylock || app.blank)
+    if (app.blank)
         return;
     if (key->kind == KEY_KIND_BACK) {
         if (lv_tick_elaps(last_back) < 150)

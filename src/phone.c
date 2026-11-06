@@ -929,7 +929,7 @@ static void mount(bool fullscreen)
 
 void phone_open(void)
 {
-    if (opened || (!showing && (lock_active() || app.keylock || app.blank)))
+    if (opened || (!showing && (lock_active() || app.blank)))
         return;
     if (!showing)
         call_only = false;

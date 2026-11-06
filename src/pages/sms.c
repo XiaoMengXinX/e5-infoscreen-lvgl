@@ -188,7 +188,7 @@ static void read_done(int status, cJSON *r, void *ctx)
 static void mark_read(void)
 {
     const cJSON *unread = jget(app.status, "sms.unread");
-    if (app.blank || app.keylock || lock_active() || reading || !cJSON_GetArraySize(unread))
+    if (app.blank || lock_active() || reading || !cJSON_GetArraySize(unread))
         return;
     reading = true;
     api_post("/sms-read", NULL, read_done, cJSON_Duplicate(unread, true));
@@ -293,7 +293,7 @@ void sms_check(const cJSON *st)
             load(-1);
         return;
     }
-    if (!jtrue(st, "sms.screen") || app.keylock)
+    if (!jtrue(st, "sms.screen"))
         return;
     if (app.blank)
         screen_set_blank(false);

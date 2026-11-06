@@ -172,6 +172,52 @@ static void unlock_done(lv_anim_t *a)
         finish_unlock();
 }
 
+static void unlock(float velocity);
+
+/* Holding * and # for a second, and no other key, unlocks, unless the setting turns
+ * it off. */
+static struct {
+    bool star, pound;
+    int others;
+    lv_timer_t *timer;
+} hold;
+
+static void hold_done(lv_timer_t *t)
+{
+    hold.timer = NULL;
+    if (locked && !dark)
+        unlock(0);
+}
+
+static void hold_reset(void)
+{
+    hold.star = hold.pound = false;
+    hold.others = 0;
+    if (hold.timer)
+        lv_timer_delete(hold.timer);
+    hold.timer = NULL;
+}
+
+void lock_key_held(const struct key_event *key)
+{
+    if (key->repeat)
+        return;
+    if (key->kind == KEY_KIND_CHAR && key->ch == '*')
+        hold.star = key->down;
+    else if (key->kind == KEY_KIND_CHAR && key->ch == '#')
+        hold.pound = key->down;
+    else
+        hold.others = key->down ? hold.others + 1 : LV_MAX(hold.others - 1, 0);
+    bool both = locked && !dark && hold.star && hold.pound && !hold.others && !jfalse(screen_config(), "lock_keys");
+    if (both && !hold.timer) {
+        hold.timer = lv_timer_create(hold_done, 1000, NULL);
+        lv_timer_set_repeat_count(hold.timer, 1);
+    } else if (!both && hold.timer) {
+        lv_timer_delete(hold.timer);
+        hold.timer = NULL;
+    }
+}
+
 static void unlock(float velocity)
 {
     if (animating)
@@ -329,9 +375,15 @@ static void apply_config(void)
     lv_obj_set_hidden(ui.month, !monthly);
     lv_obj_set_hidden(ui.usage, !daily && !monthly);
     lv_obj_set_hidden(ui.rates, !speed);
-    if (!key_armed)
-        ui_set_text(ui.hint, jfalse(c, "touch") ? L("触控已关闭 · 按两次确认键解锁", "Touch off · press OK twice")
-                                                : L("从下方向上滑动解锁", "Swipe up to unlock"));
+    if (key_armed)
+        return;
+    bool keys = !jfalse(c, "lock_keys");
+    if (jfalse(c, "touch"))
+        ui_set_text(ui.hint, keys ? L("触控已关闭 · 按两次确认键或长按 * 和 # 解锁", "Touch off · press OK twice, or hold * and #")
+                                  : L("触控已关闭 · 按两次确认键解锁", "Touch off · press OK twice"));
+    else
+        ui_set_text(ui.hint, keys ? L("上滑或长按 * 和 # 解锁", "Swipe up, or hold * and #, to unlock")
+                                  : L("从下方向上滑动解锁", "Swipe up to unlock"));
 }
 
 void lock_create(void)
@@ -434,6 +486,7 @@ void lock_engage(void)
     locked = true;
     wake_at = lv_tick_get();
     key_armed = 0;
+    hold_reset();
     /* The keyboard is drawn above the lock, so an open field must give it up. */
     input_defocus();
     /* So is a dialog, which the lock would leave open on top of it. */
