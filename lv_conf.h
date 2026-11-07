@@ -17,6 +17,8 @@
 #define LV_USE_OS LV_OS_PTHREAD
 #define LV_DRAW_SW_DRAW_UNIT_CNT 4
 #define LV_USE_DRAW_SW_ASM LV_DRAW_SW_ASM_NEON
+/* Text drawn straight to a layer renders its glyphs here, and FreeType wants the stack. */
+#define LV_DRAW_THREAD_STACK_SIZE (64 * 1024)
 
 #define LV_USE_LOG 1
 #define LV_LOG_LEVEL LV_LOG_LEVEL_WARN

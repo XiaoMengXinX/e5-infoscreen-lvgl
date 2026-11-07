@@ -5,6 +5,7 @@
 #include FT_SIZES_H
 
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +28,9 @@ struct sized_font {
     struct sized_font *next;
 };
 
+/* LVGL draws text on several threads; FreeType's faces and the glyph caches
+ * are shared, and a glyph is read only under the lock, as a cache can move. */
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static FT_Library library;
 static FT_Face faces[2], fallback;
 static struct sized_font *fonts;
@@ -141,9 +145,12 @@ static const struct glyph *render(struct sized_font *f, uint32_t letter)
 
 static bool glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t *dsc, uint32_t letter, uint32_t next)
 {
+    pthread_mutex_lock(&lock);
     const struct glyph *g = render((struct sized_font *)font, letter);
-    if (!g)
+    if (!g) {
+        pthread_mutex_unlock(&lock);
         return false;
+    }
     dsc->adv_w = g->adv_w;
     dsc->box_w = g->box_w;
     dsc->box_h = g->box_h;
@@ -152,18 +159,21 @@ static bool glyph_dsc(const lv_font_t *font, lv_font_glyph_dsc_t *dsc, uint32_t 
     dsc->format = LV_FONT_GLYPH_FORMAT_A8;
     dsc->gid.index = letter;
     dsc->is_placeholder = 0;
+    pthread_mutex_unlock(&lock);
     return true;
 }
 
 static const void *glyph_bitmap(lv_font_glyph_dsc_t *dsc, lv_draw_buf_t *buf)
 {
     struct sized_font *f = (struct sized_font *)dsc->resolved_font;
+    pthread_mutex_lock(&lock);
     const struct glyph *g = render(f, dsc->gid.index);
-    if (!g || !g->bitmap || !buf)
-        return NULL;
-    for (int y = 0; y < g->box_h; y++)
-        memcpy(buf->data + (size_t)y * buf->header.stride, g->bitmap + (size_t)y * g->box_w, g->box_w);
-    return buf;
+    bool drawn = g && g->bitmap && buf;
+    if (drawn)
+        for (int y = 0; y < g->box_h; y++)
+            memcpy(buf->data + (size_t)y * buf->header.stride, g->bitmap + (size_t)y * g->box_w, g->box_w);
+    pthread_mutex_unlock(&lock);
+    return drawn ? buf : NULL;
 }
 
 static struct sized_font *create(FT_Face face, int px, bool bold)
@@ -191,6 +201,7 @@ const lv_font_t *font_get(int px, bool bold)
     for (struct sized_font *f = fonts; f; f = f->next)
         if (f->px == px && f->bold == bold)
             return &f->font;
+    pthread_mutex_lock(&lock);
     struct sized_font *f = create(faces[bold], px, bold), *tail = f;
     if (fallback && fallback != faces[bold]) {
         tail = create(fallback, px, false);
@@ -200,5 +211,6 @@ const lv_font_t *font_get(int px, bool bold)
     tail->font.fallback = &lv_font_montserrat_14;
     f->next = fonts;
     fonts = f;
+    pthread_mutex_unlock(&lock);
     return &f->font;
 }
