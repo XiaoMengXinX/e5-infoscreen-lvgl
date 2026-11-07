@@ -36,6 +36,8 @@
 #define AT_HELPER "/usr/libexec/unisoc-modem/at"
 #define CACHE "/etc/e5-infoscreen/stk"
 #define SESSIONS "/tmp/e5-stk"
+/* The boot service that sets the cards' channels apart; see stk_map_channels. */
+#define SIM_SERVICE "/etc/rc.d/S22e5-infoscreen-sim"
 #define ITEMS 32
 /* Android's StkApp.UI_TIMEOUT, DISP_TEXT_WAIT_FOR_USER_TIMEOUT and
  * DISP_TEXT_CLEAR_AFTER_DELAY_TIMEOUT. */
@@ -498,6 +500,16 @@ static uint32_t boot_ms(void)
     struct timespec t;
     clock_gettime(CLOCK_BOOTTIME, &t);
     return (uint32_t)(t.tv_sec * 1000 + t.tv_nsec / 1000000);
+}
+
+/* Until the boot service has run, what the cards send cannot be told apart. */
+static bool awaiting_restart(void)
+{
+    struct stat st;
+    struct timespec now, up;
+    clock_gettime(CLOCK_REALTIME, &now);
+    clock_gettime(CLOCK_BOOTTIME, &up);
+    return lstat(SIM_SERVICE, &st) || st.st_mtime > now.tv_sec - up.tv_sec;
 }
 
 static void session_path(int c, char *path, size_t size)
@@ -1271,6 +1283,8 @@ static void focus_entry(lv_obj_t *entry)
  * change the page in the middle of a SIM session. */
 bool stk_key(const struct key_event *key)
 {
+    if (awaiting_restart())
+        return false;
     bool dual = present(0) && present(1);
     switch (key->kind) {
     case KEY_KIND_LEFT:
@@ -1400,6 +1414,11 @@ static void render(void)
     keyboard_close();
     lv_obj_clean(ui.body);
     ui.field = NULL;
+    if (awaiting_restart()) {
+        lv_obj_set_hidden(ui.switcher, true);
+        message(L("SIM 卡应用已开启，重启设备后才能使用。", "The SIM toolkit is on; restart the device to use it."));
+        return;
+    }
     const struct cmd *m = k->view == V_MENU ? &k->menu : &k->cmd;
     if (k->view != V_LOADING && k->view != V_EMPTY && k->view != V_WAIT && *m->title)
         ui_heading(ui.body, m->title);
@@ -1540,6 +1559,15 @@ int stk_map_channels(void)
     return 1;
 }
 
+static void listen(void)
+{
+    ticking();
+    trace_open();
+    for (int c = 0; c < 2; c++)
+        if (!in_session(&cards[c]))
+            session_restore(c);
+}
+
 void stk_create(lv_obj_t *parent)
 {
     memset(&ui, 0, sizeof ui);
@@ -1563,13 +1591,8 @@ void stk_create(lv_obj_t *parent)
     char option[4];
     screen_option("stk", option, sizeof option);
     enabled = strcmp(option, "0") != 0;
-    if (enabled) {
-        ticking();
-        trace_open();
-        for (int c = 0; c < 2; c++)
-            if (!in_session(&cards[c]))
-                session_restore(c);
-    }
+    if (enabled && !awaiting_restart())
+        listen();
     render();
 }
 
@@ -1587,8 +1610,8 @@ void stk_set_enabled(bool on)
     enabled = on;
     screen_option_set("stk", on ? "1" : "0");
     if (on) {
-        ticking();
-        trace_open();
+        if (!awaiting_restart())
+            listen();
         return;
     }
     for (int c = 0; c < 2; c++) {
@@ -1633,6 +1656,10 @@ void stk_open(void)
         popup_close(popup);
     open_now = true;
     on_switcher = false;
+    if (awaiting_restart()) {
+        render();
+        return;
+    }
     ticking();
     if (!trace_open()) {
         for (int c = 0; c < 2; c++)
