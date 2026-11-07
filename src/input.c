@@ -6,9 +6,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "src/core/lv_group_private.h"
+#include "src/indev/lv_indev_private.h"
 
 #include "app.h"
 
@@ -34,6 +36,8 @@ static struct {
     int x[SLOTS], y[SLOTS];
     bool legacy_down;
     lv_point_t point;
+    /* When the panel sampled the point, in monotonic ms. */
+    double time;
     bool pressed;
 } touch = {.primary = -1};
 
@@ -167,9 +171,14 @@ lv_group_t *input_group(void)
     return lv_indev_get_group(keypad_indev);
 }
 
-lv_indev_t *input_touch(void)
+void input_touch_take(void)
 {
-    return touch_indev;
+    lv_obj_t *pressed = touch_indev->pointer.act_obj;
+    if (pressed) {
+        lv_obj_remove_state(pressed, LV_STATE_PRESSED);
+        lv_obj_send_event(pressed, LV_EVENT_PRESS_LOST, touch_indev);
+    }
+    lv_indev_wait_release(touch_indev);
 }
 
 /* The kernel drops a position equal to the last one it reported, so a touch where
@@ -208,6 +217,11 @@ static void open_devices(void)
         ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys);
         struct device *d = &devices[device_count];
         d->fd = fd;
+        if (TEST(abs, ABS_MT_POSITION_X) || (TEST(abs, ABS_X) && TEST(keys, BTN_TOUCH))) {
+            /* Event times on the clock the drag's frames are timed by. */
+            int clock = CLOCK_MONOTONIC;
+            ioctl(fd, EVIOCSCLOCKID, &clock);
+        }
         if (TEST(abs, ABS_MT_POSITION_X)) {
             d->kind = DEVICE_TOUCH;
             ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &d->x);
@@ -293,7 +307,7 @@ static void touch_sync(const struct device *d)
     touch.pressed = pressed;
     if (pressed && !was_pressed)
         shell_touch_press();
-    shell_swipe(pressed, touch.point);
+    shell_swipe(pressed, touch.point, touch.time);
     lv_indev_read(touch_indev);
 }
 
@@ -319,6 +333,7 @@ static void touch_event(const struct device *d, const struct input_event *ev)
     } else if (ev->type == EV_KEY && ev->code == BTN_TOUCH) {
         touch.legacy_down = ev->value != 0;
     } else if (ev->type == EV_SYN && ev->code == SYN_REPORT) {
+        touch.time = ev->input_event_sec * 1e3 + ev->input_event_usec / 1e3;
         touch_sync(d);
     }
 }

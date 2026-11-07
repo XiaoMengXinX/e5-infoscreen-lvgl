@@ -174,7 +174,30 @@ int api_fd(void)
     return q.wake[0];
 }
 
-void api_dispatch(void)
+/* Replies held back while the screen is in motion, in arrival order. */
+static struct request *held, **held_tail = &held;
+
+static void deliver(struct request *r)
+{
+    if (r->event_cb)
+        r->event_cb(r->json);
+    else if (r->text_cb)
+        r->text_cb(r->status, r->response, r->ctx);
+    else if (r->cb)
+        r->cb(r->status, r->json, r->ctx);
+    cJSON_Delete(r->json);
+    free(r->response);
+    free(r->path);
+    free(r->body);
+    free(r);
+}
+
+bool api_held(void)
+{
+    return held;
+}
+
+void api_dispatch(bool hold)
 {
     char drain[64];
     while (read(q.wake[0], drain, sizeof drain) > 0) {
@@ -184,20 +207,22 @@ void api_dispatch(void)
     q.done = NULL;
     q.done_tail = &q.done;
     pthread_mutex_unlock(&q.lock);
+    if (!hold && held) {
+        *held_tail = list;
+        list = held;
+        held = NULL;
+        held_tail = &held;
+    }
     while (list) {
         struct request *r = list;
         list = r->next;
-        if (r->event_cb)
-            r->event_cb(r->json);
-        else if (r->text_cb)
-            r->text_cb(r->status, r->response, r->ctx);
-        else if (r->cb)
-            r->cb(r->status, r->json, r->ctx);
-        cJSON_Delete(r->json);
-        free(r->response);
-        free(r->path);
-        free(r->body);
-        free(r);
+        if (hold && !r->event_cb) {
+            r->next = NULL;
+            *held_tail = r;
+            held_tail = &r->next;
+        } else {
+            deliver(r);
+        }
     }
 }
 

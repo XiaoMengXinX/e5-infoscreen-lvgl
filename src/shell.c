@@ -648,18 +648,29 @@ static void slide_done(lv_anim_t *a)
         lv_obj_set_hidden(obj, true);
 }
 
-/* Slides a page from where it is, in a time for the distance left. */
-static void slide(lv_obj_t *obj, int32_t to)
+/* The speed, in px/ms, a released drag hands to the slide it starts. */
+static float slide_speed;
+
+/* Slides a page from where it is. Handed a finger's speed toward its end, it
+ * starts at that speed and settles; from rest it gathers speed first. */
+static void slide(lv_obj_t *obj, int32_t to, float speed)
 {
     lv_anim_delete(obj, slide_x);
     int32_t from = lv_obj_get_style_translate_x(obj, 0), w = LV_MAX(lv_obj_get_width(ui.content), 1);
+    int32_t distance = LV_MIN(LV_ABS(to - from), w);
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, obj);
     lv_anim_set_exec_cb(&a, slide_x);
     lv_anim_set_values(&a, from, to);
-    lv_anim_set_duration(&a, LV_MAX(120, 280 * LV_MIN(LV_ABS(to - from), w) / w));
-    lv_anim_set_path_cb(&a, ui_ease_out);
+    if (speed > 0) {
+        /* The ease-out starts at 3 × distance / duration. */
+        lv_anim_set_duration(&a, (uint32_t)LV_CLAMP(120, lroundf(3 * (float)distance / speed), 320));
+        lv_anim_set_path_cb(&a, ui_ease_out);
+    } else {
+        lv_anim_set_duration(&a, LV_MAX(160, 320 * distance / w));
+        lv_anim_set_path_cb(&a, ui_ease_slide);
+    }
     lv_anim_set_completed_cb(&a, slide_done);
     lv_anim_start(&a);
 }
@@ -691,8 +702,8 @@ void shell_show(enum page page)
             int32_t w = lv_obj_get_width(ui.content);
             if (was_hidden || lv_obj_get_style_translate_x(now, 0) * slide_dir <= 0)
                 slide_x(now, slide_dir * w);
-            slide(old, -slide_dir * w);
-            slide(now, 0);
+            slide(old, -slide_dir * w, slide_speed);
+            slide(now, 0, slide_speed);
         } else {
             lv_obj_set_hidden(old, true);
             slide_x(old, 0);
@@ -986,6 +997,7 @@ static void reconcile_power(const cJSON *st)
     const cJSON *awake = jget(st, "screen.awake");
     if (cJSON_IsBool(awake) && cJSON_IsTrue(awake) == app.blank && lv_tick_elaps(blank_changed_at) > 1000) {
         app.blank = !cJSON_IsTrue(awake);
+        sync_drawing();
         lock_power(app.blank);
         clock_tick(NULL);
         idle_reset();
@@ -997,7 +1009,6 @@ static void reconcile_power(const cJSON *st)
         supply_online = cJSON_IsTrue(online);
         if (changed) {
             if (app.blank)
-        sync_drawing();
                 screen_set_blank(false);
             else
                 idle_reset();
@@ -1360,18 +1371,75 @@ void shell_touch_press(void)
 
 /* A horizontal drag carries the page and the one beside it with the finger, and
  * on release goes on to that page or back; once a drag goes vertical, it stays a
- * scroll. */
+ * scroll. The panel reports a little under the display's rate and unevenly, so
+ * each frame places the page where the finger's recent speed puts it by then. */
+#define SWIPE_SAMPLES 8
+/* The span the speed is taken over, and how far past the last sample it reaches. */
+#define SWIPE_SPEED_MS 60
+#define SWIPE_AHEAD_MS 20
+/* A release faster than this, in px/ms, goes the way the finger was moving. */
+#define SWIPE_FLING 0.35f
+
 static struct {
     bool active;
+    /* 'x' for a page swipe, 'y' once the touch is the page's own; 0 undecided. */
     char axis;
+    /* The page's own gestures see the touch. */
+    bool forward;
     lv_point_t start;
-    uint32_t time;
     enum page page;
     /* The page showing beside the dragged one, or -1. */
     int peer;
     /* Where the page sat when the drag took it, and where it is now. */
     int32_t base, at;
+    struct {
+        double time;
+        int32_t x;
+    } samples[SWIPE_SAMPLES];
+    int count;
 } swipe;
+
+static bool swipe_dragging(void)
+{
+    return swipe.active && swipe.axis == 'x' && swipe.page == app.page;
+}
+
+static double now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+static void swipe_sample(double time, int32_t x)
+{
+    if (swipe.count == SWIPE_SAMPLES) {
+        memmove(swipe.samples, swipe.samples + 1, sizeof swipe.samples[0] * (SWIPE_SAMPLES - 1));
+        swipe.count--;
+    }
+    swipe.samples[swipe.count].time = time;
+    swipe.samples[swipe.count++].x = x;
+}
+
+/* The finger's speed in px/ms over its last samples; 0 once it has stopped. */
+static float swipe_speed(double now)
+{
+    int last = swipe.count - 1, first = last;
+    if (last < 1 || now - swipe.samples[last].time > SWIPE_SPEED_MS)
+        return 0;
+    while (first > 0 && swipe.samples[last].time - swipe.samples[first - 1].time <= SWIPE_SPEED_MS)
+        first--;
+    double span = swipe.samples[last].time - swipe.samples[first].time;
+    return span < 1 ? 0 : (float)((swipe.samples[last].x - swipe.samples[first].x) / span);
+}
+
+/* Where the finger is taken to be at time now. */
+static int32_t swipe_finger(double now)
+{
+    const int last = swipe.count - 1;
+    double ahead = LV_CLAMP(0, now - swipe.samples[last].time, SWIPE_AHEAD_MS);
+    return swipe.samples[last].x + (int32_t)lroundf(swipe_speed(now) * (float)ahead);
+}
 
 static void peer_park(void)
 {
@@ -1382,10 +1450,10 @@ static void peer_park(void)
     swipe.peer = -1;
 }
 
-static void swipe_drag(int32_t dx)
+static void swipe_place(double now)
 {
     int32_t w = lv_obj_get_width(ui.content);
-    swipe.at = LV_CLAMP(-w, swipe.base + dx, w);
+    swipe.at = LV_CLAMP(-w, swipe.base + swipe_finger(now) - swipe.start.x, w);
     int peer = swipe.at < 0 ? page_beside(1) : swipe.at > 0 ? page_beside(-1) : -1;
     if (peer != swipe.peer) {
         peer_park();
@@ -1401,12 +1469,30 @@ static void swipe_drag(int32_t dx)
         slide_x(ui.pages[peer], swipe.at + (swipe.at < 0 ? w : -w));
 }
 
+/* Each frame of a drag places the pages for the moment it is drawn, and asks for
+ * the next while the finger is still taken to be moving. */
+static void swipe_frame(lv_event_t *e)
+{
+    if (!swipe_dragging())
+        return;
+    double now = now_ms();
+    if (lv_event_get_code(e) == LV_EVENT_REFR_START)
+        swipe_place(now);
+    else if (swipe_finger(now + 1000.0 / 60) != swipe_finger(now))
+        lv_obj_invalidate(ui.content);
+}
+
 static void swipe_release(void)
 {
-    int32_t w = lv_obj_get_width(ui.content), dx = swipe.at - swipe.base;
-    bool flick = LV_ABS(dx) > S(30) && lv_tick_elaps(swipe.time) < 300;
-    if (swipe.at && (LV_ABS(swipe.at) > w / 3 || flick)) {
+    int32_t w = lv_obj_get_width(ui.content);
+    float speed = swipe_speed(now_ms());
+    /* The finger moving the way the page went, or back. */
+    bool onward = speed && (speed < 0) == (swipe.at < 0);
+    bool on = fabsf(speed) > SWIPE_FLING ? onward : LV_ABS(swipe.at) > w / 3;
+    if (swipe.at && on) {
+        slide_speed = onward ? fabsf(speed) : 0;
         shell_step(swipe.at < 0 ? 1 : -1);
+        slide_speed = 0;
         if (app.page != swipe.page) {
             swipe.peer = -1;
             return;
@@ -1415,9 +1501,10 @@ static void swipe_release(void)
     /* Back where it was. */
     lv_obj_t *page = ui.pages[app.page], *peer = swipe.peer >= 0 ? ui.pages[swipe.peer] : NULL;
     if (theme.motion) {
-        slide(page, 0);
+        float back = speed && !onward ? fabsf(speed) : 0;
+        slide(page, 0, back);
         if (peer)
-            slide(peer, swipe.at < 0 ? w : -w);
+            slide(peer, swipe.at < 0 ? w : -w, back);
         swipe.peer = -1;
     } else {
         slide_x(page, 0);
@@ -1425,53 +1512,89 @@ static void swipe_release(void)
     }
 }
 
-void shell_swipe(bool pressed, lv_point_t p)
+void shell_swipe(bool pressed, lv_point_t p, double time)
 {
     if (swipe.active && swipe.axis == 'x' && swipe.page != app.page) {
         /* The page changed under the drag. */
         peer_park();
         swipe.active = false;
     }
-    if (pressed && !swipe.active) {
+    if (swipe.forward && (swipe.axis == 'x' || swipe.page != app.page || !pressed || input_touch_count() > 1)) {
+        swipe.forward = false;
+        page_ops[swipe.page]->drag(false, p);
+    } else if (swipe.forward) {
+        page_ops[app.page]->drag(true, p);
+    }
+    if (!pressed) {
+        if (swipe.active && swipe.axis == 'x')
+            swipe_release();
+        swipe.active = false;
+        swipe.axis = 0;
+        return;
+    }
+    if (!swipe.active && !swipe.axis) {
+        /* A touch that began over the lock or a sheet is looked at again until
+         * one of the page's own begins. */
         idle_reset();
         lv_area_t nav;
         lv_obj_get_coords(ui.nav, &nav);
         bool in_nav = !lv_obj_is_hidden(ui.nav) && p.y >= nav.y1 && p.y <= nav.y2;
-        bool held = page_ops[app.page]->held && page_ops[app.page]->held();
-        swipe.active = input_touch_count() == 1 && !in_nav && !held && !lock_active() && !phone_is_open() &&
-                       !power_menu_is_open() && !dialog_is_open() && !shell_overlay_open() && lv_obj_is_hidden(ui.menu);
-        swipe.axis = 0;
+        bool free = input_touch_count() == 1 && !in_nav && !lock_active() && !phone_is_open() && !power_menu_is_open() &&
+                    !dialog_is_open() && !shell_overlay_open() && lv_obj_is_hidden(ui.menu);
+        swipe.active = free && !(page_ops[app.page]->held && page_ops[app.page]->held());
+        swipe.forward = free && page_ops[app.page]->drag;
         swipe.start = p;
-        swipe.time = lv_tick_get();
         swipe.page = app.page;
         swipe.peer = -1;
+        swipe.count = 0;
+        if (swipe.forward)
+            page_ops[app.page]->drag(true, p);
         return;
     }
     if (!swipe.active)
         return;
-    int32_t dx = p.x - swipe.start.x, dy = p.y - swipe.start.y;
-    if (!pressed || input_touch_count() > 1) {
+    if (input_touch_count() > 1) {
         if (swipe.axis == 'x')
             swipe_release();
         swipe.active = false;
+        swipe.axis = 'y';
         return;
     }
+    int32_t dx = p.x - swipe.start.x, dy = p.y - swipe.start.y;
     if (!swipe.axis && LV_MAX(LV_ABS(dx), LV_ABS(dy)) >= 8) {
         swipe.axis = LV_ABS(dx) > LV_ABS(dy) * 3 / 2 ? 'x' : 'y';
         if (swipe.axis == 'y') {
             swipe.active = false;
             return;
         }
-        lv_indev_wait_release(input_touch());
+        input_touch_take();
+        if (swipe.forward) {
+            swipe.forward = false;
+            page_ops[app.page]->drag(false, p);
+        }
         /* The drag takes the page from here, so it does not jump the first steps. */
         lv_obj_t *page = ui.pages[app.page];
         lv_anim_delete(page, slide_x);
         swipe.base = lv_obj_get_style_translate_x(page, 0);
         swipe.start = p;
-        dx = 0;
     }
-    if (swipe.axis == 'x')
-        swipe_drag(dx);
+    if (swipe.axis == 'x') {
+        swipe_sample(time, p.x);
+        swipe_place(now_ms());
+    }
+}
+
+bool shell_sliding(void)
+{
+    if (swipe_dragging())
+        return swipe_speed(now_ms()) != 0;
+    /* A slide's last stretch moves a few pixels a frame, where a late one does not show. */
+    for (int i = 0; i < PAGE_COUNT; i++) {
+        lv_anim_t *a = lv_anim_get(ui.pages[i], slide_x);
+        if (a && a->act_time < (int32_t)(a->duration * 3 / 5))
+            return true;
+    }
+    return false;
 }
 
 /* ---------- construction ---------- */
@@ -1867,6 +1990,8 @@ void shell_init(void)
     power_key.timer = lv_timer_create(power_hold, 1200, NULL);
     lv_timer_pause(power_key.timer);
     build();
+    lv_display_add_event_cb(lv_display_get_default(), swipe_frame, LV_EVENT_REFR_START, NULL);
+    lv_display_add_event_cb(lv_display_get_default(), swipe_frame, LV_EVENT_REFR_READY, NULL);
     lock_engage();
     shell_show(PAGE_OVERVIEW);
     clock_tick(NULL);
