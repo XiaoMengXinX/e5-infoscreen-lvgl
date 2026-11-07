@@ -384,12 +384,26 @@ void idle_reset(void)
 static void clock_tick(lv_timer_t *t);
 static void render_status(void);
 
+/* A dark panel draws nothing, or a spinner would redraw it every frame; it
+ * wakes to a whole new frame. */
+static void sync_drawing(void)
+{
+    static bool drawing = true;
+    if (drawing != app.blank)
+        return;
+    drawing = !app.blank;
+    lv_display_enable_invalidation(lv_display_get_default(), drawing);
+    if (drawing)
+        lv_obj_invalidate(lv_screen_active());
+}
+
 void screen_set_blank(bool blank)
 {
     if (blank == app.blank)
         return;
     app.blank = blank;
     blank_changed_at = lv_tick_get();
+    sync_drawing();
     lock_power(blank);
     backlight_send(blank ? 0 : app.brightness);
     clock_tick(NULL);
@@ -983,6 +997,7 @@ static void reconcile_power(const cJSON *st)
         supply_online = cJSON_IsTrue(online);
         if (changed) {
             if (app.blank)
+        sync_drawing();
                 screen_set_blank(false);
             else
                 idle_reset();
