@@ -9,6 +9,7 @@
 #include "api.h"
 #include "app.h"
 #include "keyboard.h"
+#include "stk.h"
 #include "theme.h"
 #include "ui.h"
 #include "util.h"
@@ -70,7 +71,7 @@ static const struct {
     {"speed_unit", "traffic"}, {"ui_theme", "palette"}, {"ui_size", "type"},
     {"ui_accent", "palette"}, {"ui_motion", "motion"}, {"status_bar", "layout"},
     {"nav_bar", "navigation"}, {"lock_enabled", "lock"}, {"lock_daily", "traffic"}, {"lock_monthly", "traffic"},
-    {"lock_speed", "signal"}, {"unlock_distance", "touch"}, {"lock_keys", "keypad"}, {"roaming", "globe"}, {"brightness", "sun"}, {"idle", "clock"},
+    {"lock_speed", "signal"}, {"unlock_distance", "touch"}, {"lock_keys", "keypad"}, {"roaming", "globe"}, {"stk", "simcard"}, {"stk_enabled", "simcard"}, {"stk_cache", "trash"}, {"brightness", "sun"}, {"idle", "clock"},
     {"touch", "touch"}, {"lang", "globe"}, {"volume", "volume"}, {"call_volume", "phone"}, {"vibrate", "bell"},
     {"sim_card", "simcard"}, {"apn", "globe"}, {"net_mode", "signal"}, {"nr_mode", "signal"},
     {"lte_bands", "signal"}, {"nr_bands", "signal"}, {"cell_lock", "lock"}, {"bands_default", "refresh"},
@@ -364,21 +365,19 @@ static int item_index(const cJSON *items, const char *id)
     return i;
 }
 
+/* The SIM toolkit's own settings, a category the backend does not have. */
+#define STK_CATEGORY "local:stk"
+
 /* The data roaming policy per SIM, as the dialing script reads it; setting it
  * goes through the device's own helper, which tells network recovery. */
 #define ROAMING "/usr/libexec/unisoc-modem/roaming"
 
 static bool roaming_allowed(int slot)
 {
-    char command[64], out[8] = "";
-    snprintf(command, sizeof command, "uci -q get unisoc_modem.main.allow_roaming%d", slot);
-    FILE *p = popen(command, "r");
-    if (p) {
-        if (!fgets(out, sizeof out, p))
-            out[0] = 0;
-        pclose(p);
-    }
-    return out[0] == '1';
+    char option[48], value[8];
+    snprintf(option, sizeof option, "unisoc_modem.main.allow_roaming%d", slot);
+    uci_get(option, value, sizeof value);
+    return !strcmp(value, "1");
 }
 
 static void add_local_items(cJSON *items, const char *cat)
@@ -405,6 +404,24 @@ static void add_local_items(cJSON *items, const char *cat)
         cJSON_AddBoolToObject(roaming, "value", roaming_allowed(slot));
         cJSON_AddNumberToObject(roaming, "slot", slot);
         cJSON_InsertItemInArray(items, item_index(items, "sim_radio0"), roaming);
+        cJSON *stk = local_item("stk", "category", "SIM 卡应用", "SIM toolkit", "SIM 卡自带的 STK 菜单",
+                                "The SIMs' own STK menus");
+        cJSON_AddStringToObject(stk, "category", STK_CATEGORY);
+        int at = item_index(items, "sim_card");
+        if (at < cJSON_GetArraySize(items))
+            at++;
+        cJSON_InsertItemInArray(items, at, stk);
+    } else if (!strcmp(cat, STK_CATEGORY)) {
+        cJSON *on = local_item("stk_enabled", "toggle", "SIM 卡应用（STK）", "SIM toolkit (STK)",
+                               "显示 SIM 卡自带的 STK 菜单，以及 SIM 卡主动发来的提示",
+                               "Shows the SIMs' own STK menus and what the SIMs send");
+        cJSON_AddBoolToObject(on, "value", stk_enabled());
+        cJSON_AddItemToArray(items, on);
+        cJSON *cache = local_item("stk_cache", "action", "清除 STK 菜单缓存", "Clear STK menu cache",
+                                  "下次打开时重新读取 STK 菜单；部分 SIM 卡要重启设备后才会重新发送",
+                                  "STK menus are read again when it next opens; some SIMs send theirs only after a restart");
+        cJSON_AddBoolToObject(cache, "confirm", true);
+        cJSON_AddItemToArray(items, cache);
     } else if (!strcmp(cat, "system")) {
         cJSON *restart = local_item("ui_restart", "action", "重启界面", "Restart the screen",
                                     "只重启信息屏界面，网络不受影响", "The screen only; the network stays up");
@@ -468,6 +485,24 @@ static void local_save(const cJSON *it, const cJSON *value)
         render();
         return;
     }
+    if (!strcmp(id, "stk_enabled")) {
+        bool on = cJSON_IsTrue(value);
+        stk_set_enabled(on);
+        /* The dual-SIM channel mapping is only for telling the cards' toolkits
+         * apart, and takes effect at the next boot. */
+        system(on ? "/etc/init.d/e5-infoscreen-sim enable >/dev/null 2>&1"
+                  : "/etc/init.d/e5-infoscreen-sim disable >/dev/null 2>&1");
+        cJSON_ReplaceItemInObject((cJSON *)it, "value", cJSON_CreateBool(on));
+        toast("%s", on ? L("已开启，重启设备后完全生效", "On; restart the device to tell both SIMs' STK menus apart")
+                       : L("已关闭，重启设备后完全生效", "Off; restart the device to finish"));
+        render();
+        return;
+    }
+    if (!strcmp(id, "stk_cache")) {
+        stk_clear_cache();
+        toast("%s", L("已清除，部分 SIM 卡需要重启设备才能重新读取 STK 菜单", "Cleared; some SIMs need a restart to send their STK menu"));
+        return;
+    }
     if (!strcmp(id, "touch_reset") && !touch_rebind()) {
         toast("%s", L("重置触摸失败", "Touch reset failed"));
         return;
@@ -514,6 +549,12 @@ static void load(struct view *v, const char *path)
 
 static void load_cat(struct view *v)
 {
+    if (!strcmp(v->cat, STK_CATEGORY)) {
+        cJSON_Delete(v->data);
+        v->data = cJSON_CreateArray();
+        add_local_items(v->data, v->cat);
+        return;
+    }
     char p[96];
     snprintf(p, sizeof p, "/settings/%s", v->cat);
     load(v, p);
@@ -1458,6 +1499,17 @@ static void open_category(const cJSON *c)
 
 static const cJSON *category(const char *id)
 {
+    if (!strcmp(id, STK_CATEGORY)) {
+        static cJSON *stk;
+        if (!stk) {
+            stk = cJSON_CreateObject();
+            cJSON_AddStringToObject(stk, "id", STK_CATEGORY);
+            cJSON *label = cJSON_AddObjectToObject(stk, "label");
+            cJSON_AddStringToObject(label, "zh", "SIM 卡应用");
+            cJSON_AddStringToObject(label, "en", "SIM toolkit");
+        }
+        return stk;
+    }
     const cJSON *c;
     cJSON_ArrayForEach(c, categories)
         if (jstr_is(c, "id", id))

@@ -37,7 +37,12 @@ start_service() {
 }
 SERVICE
     chmod 755 /etc/init.d/e5-infoscreen-sim
-    /etc/init.d/e5-infoscreen-sim enable
+    # On unless the screen's SIM toolkit setting turned it off.
+    if [ "$(uci -q get e5-infoscreen.main.stk)" = 0 ]; then
+        /etc/init.d/e5-infoscreen-sim disable
+    else
+        /etc/init.d/e5-infoscreen-sim enable
+    fi
     ;;
 webkit)
     [ -e $dir/session.webkit ] || { echo "missing $dir/session.webkit" >&2; exit 1; }

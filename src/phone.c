@@ -35,7 +35,7 @@ static bool card_picked;
 static const char *pending;
 static char last_notice[256];
 static bool full;
-static uint32_t guard_until, dial_after, awaiting_since, active_since;
+static uint32_t guard_until, dial_after, awaiting_since, active_since, bridge_until;
 static char awaiting[32], active_id[32], selected[32], tone_call[32];
 static char tone_digits[TONES + 1];
 static struct {
@@ -157,11 +157,19 @@ static void performed(int status, cJSON *r, void *ctx)
     struct action *a = ctx;
     if (status >= 200 && status < 300 && api_reply_ok(r)) {
         if (!strcmp(a->name, "call")) {
+            bridge_until = 0;
             call_id(r, awaiting);
             awaiting_since = lv_tick_get();
         }
         read_status();
+    } else if (!strcmp(a->name, "call") && strstr(jstr_or(r, "error", ""), "+SPUSATCALLCTRL")) {
+        /* A SIM with call control has the modem report its verdict first, which
+         * ModemManager takes for a failed dial; the call goes on under a new call
+         * object, and the call screen stays up in between (see dial). */
+        bridge_until = lv_tick_get() + 2000;
+        read_status();
     } else {
+        bridge_until = 0;
         char error[200];
         error_text(jstr_or(r, "error", status ? "HTTP error" : L("请求超时，通话结果尚未确认。请查看通话状态，不要重复拨号。",
                    "Request timed out; call result is unknown. Check its state before dialing again.")), error, sizeof error);
@@ -180,8 +188,10 @@ static void perform(const char *name, cJSON *body)
         cJSON_Delete(body);
         return;
     }
-    if (!strcmp(name, "hangup"))
+    if (!strcmp(name, "hangup")) {
         tone_count = 0;
+        bridge_until = 0;
+    }
     static const char *const names[] = {"call", "answer", "hangup", "audio"};
     for (size_t i = 0; i < sizeof names / sizeof *names; i++)
         if (!strcmp(name, names[i]))
@@ -213,10 +223,23 @@ static bool valid_number(const char *n)
     return true;
 }
 
+static bool sim_present(int slot)
+{
+    const cJSON *sim;
+    cJSON_ArrayForEach(sim, jget(app.status, "sims"))
+        if ((int)jnum_or(sim, "slot", -1) == slot)
+            return jtrue(sim, "present");
+    return false;
+}
+
 static void dial(void)
 {
     if (pending || current() || lv_tick_get() < dial_after || *awaiting)
         return;
+    if (!sim_present(card)) {
+        toast("%s", L("未插入 SIM 卡", "No SIM card"));
+        return;
+    }
     if (!valid_number(number)) {
         toast("%s", L("请输入至少 3 位有效号码", "Enter a valid number (at least 3 digits)"));
         return;
@@ -224,6 +247,8 @@ static void dial(void)
     cJSON *body = cJSON_CreateObject();
     cJSON_AddStringToObject(body, "number", number);
     cJSON_AddNumberToObject(body, "card", card);
+    /* The dial's own call may end before its reply arrives (see performed). */
+    bridge_until = lv_tick_get() + 2000;
     perform("call", body);
 }
 
@@ -542,10 +567,11 @@ static void on_choice(lv_event_t *e)
 static lv_obj_t *sheet(const char *title)
 {
     close_sheet();
-    ui.sheet = lv_obj_create(ui.root);
+    /* On the top layer, so the shade covers the whole screen and not just the
+     * phone's padded content. */
+    ui.sheet = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(ui.sheet);
     lv_obj_set_size(ui.sheet, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_floating(ui.sheet, true);
     lv_obj_set_style_bg_color(ui.sheet, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(ui.sheet, LV_OPA_60, 0);
     lv_obj_t *panel = ui_box(ui.sheet, LV_FLEX_FLOW_COLUMN, 10);
@@ -695,7 +721,6 @@ static void build_dialer(void)
     lv_obj_set_style_min_height(area, S(44), 0);
     lv_obj_set_flex_align(area, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     ui.placeholder = ui_text(area, 13, false, theme.dim);
-    lv_label_set_text(ui.placeholder, L("输入电话号码", "Enter a number"));
     ui.number = ui_text(area, 28, false, theme.text);
     lv_obj_set_width(ui.number, LV_PCT(100));
     lv_obj_set_style_text_align(ui.number, LV_TEXT_ALIGN_CENTER, 0);
@@ -786,6 +811,13 @@ static void draw(void)
         tone_count = 0;
         keypad_open = false;
     }
+    bool bridging = bridge_until && lv_tick_get() < bridge_until;
+    if (!bridging)
+        bridge_until = 0;
+    /* Between the dial ModemManager gave up on and the call it picks up again,
+     * keep the call screen as it was. */
+    if (!c && bridging && ui.call_state)
+        return;
     bool in_call = c != NULL, built_call = ui.call_state != NULL;
     if ((call_only || in_call) != full)
         mount(call_only || in_call);
@@ -793,6 +825,11 @@ static void draw(void)
         build();
 
     if (!in_call) {
+        /* Only a card that is in can be picked; with one card it is that one. */
+        bool in[2] = {sim_present(0), sim_present(1)};
+        if (!in[card] && in[!card])
+            card = !card;
+        ui_set_text(ui.placeholder, in[0] || in[1] ? L("输入电话号码", "Enter a number") : L("未插入 SIM 卡", "No SIM card"));
         lv_obj_set_hidden(ui.placeholder, *number != 0);
         lv_obj_set_hidden(ui.number, *number == 0);
         ui_set_text(ui.number, number);
@@ -803,10 +840,10 @@ static void draw(void)
             lv_obj_set_style_bg_opa(ui.sims[i], on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
             lv_obj_set_style_bg_color(ui.sims[i], theme.active, 0);
             lv_obj_set_style_text_color(lv_obj_get_child(ui.sims[i], 0), on ? theme.accent : theme.dim, 0);
-            lv_obj_set_state(ui.sims[i], LV_STATE_DISABLED, pending != NULL);
+            lv_obj_set_state(ui.sims[i], LV_STATE_DISABLED, pending != NULL || !in[i]);
         }
         bool settling = lv_tick_get() < dial_after || *awaiting;
-        lv_obj_set_state(ui.dial, LV_STATE_DISABLED, pending || settling);
+        lv_obj_set_state(ui.dial, LV_STATE_DISABLED, pending || settling || !in[card]);
         lv_obj_set_style_opa(ui.erase, *number ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
         lv_obj_set_clickable(ui.erase, *number != 0);
         return;
@@ -965,13 +1002,6 @@ void phone_close(void)
     idle_reset();
 }
 
-/* The focus the keys show; LVGL's own first focus is not one. */
-static lv_obj_t *key_focus(void)
-{
-    lv_obj_t *focused = lv_group_get_focused(group);
-    return focused && lv_obj_has_state(focused, LV_STATE_FOCUS_KEY) ? focused : NULL;
-}
-
 static void focus(lv_obj_t *obj)
 {
     lv_group_focus_obj(obj);
@@ -1044,19 +1074,19 @@ bool phone_key(const struct key_event *key)
     /* The dialer opens with no focus, for the number keys; Up then picks the
      * SIM switch and Down the keypad's 1. */
     case KEY_KIND_OK:
-        if (key_focus())
+        if (input_key_focus(group))
             input_focus_key(LV_KEY_ENTER);
         else if (c)
             input_focus_move(group, 1);
         return true;
     case KEY_KIND_UP:
-        if (!c && !key_focus())
+        if (!c && !input_key_focus(group))
             focus(ui.sims[card]);
         else
             input_focus_toward(group, 0, -1);
         return true;
     case KEY_KIND_DOWN: {
-        lv_obj_t *focused = key_focus();
+        lv_obj_t *focused = input_key_focus(group);
         if (!c && !focused)
             focus(lv_obj_get_child(ui.pad, 0));
         /* From * 0 and # the dial key is the way down, whichever is nearer. */

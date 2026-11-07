@@ -36,6 +36,8 @@ void usb_device_name(const cJSON *device, char *out, size_t size);
  * gives an empty string when it is not set. */
 void screen_option(const char *name, char *out, size_t size);
 void screen_option_set(const char *name, const char *value);
+/* Any UCI option, "package.section.option"; an empty string when it is not set. */
+void uci_get(const char *option, char *out, size_t size);
 
 struct local_time {
     int year, month, day, hour, minute, second;

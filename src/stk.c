@@ -73,7 +73,7 @@ static struct card {
     bool menu_known, no_menu, pending, recovering, registered, auto_clear;
     struct cmd menu, cmd;
     enum view view;
-    uint32_t since, deadline, polled;
+    uint32_t since, polled;
     char iccid[24], profile[80];
     /* What the cache should hold, until the ICCID it is kept under is known. */
     char menu_hex[600];
@@ -95,7 +95,7 @@ static struct {
 static bool on_switcher;
 
 static int current;
-static bool open_now;
+static bool open_now, enabled = true;
 /* The card whose command the popup shows, or -1. */
 static int popup = -1;
 static int ring_dst = -1, ring_ch = -1;
@@ -144,9 +144,9 @@ struct out {
 static void put(struct out *o, uint32_t c)
 {
     char b[4];
-    int n = c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
     if (c >= 0xD800 && c < 0xE000)
         c = '?';
+    int n = c < 0x80 ? 1 : c < 0x800 ? 2 : 3;
     if (n == 1) {
         b[0] = (char)c;
     } else if (n == 2) {
@@ -271,16 +271,16 @@ static int answer_text(const char *text, uint8_t qualifier, uint8_t *b, int room
             data[n++] = (uint8_t)c;
             continue;
         }
-        int code = '?';
-        for (int k = 0; k < 128; k++)
+        int code = -1;
+        for (int k = 0; k < 128 && code < 0; k++)
             if (gsm[k] == c && k != 0x1B)
                 code = k;
-        for (size_t k = 0; code == '?' && c != '?' && k < sizeof gsm_ext / sizeof *gsm_ext; k++)
+        for (size_t k = 0; code < 0 && k < sizeof gsm_ext / sizeof *gsm_ext; k++)
             if (gsm_ext[k][1] == c) {
                 data[n++] = 0x1B;
                 code = gsm_ext[k][0];
             }
-        data[n++] = (uint8_t)code;
+        data[n++] = (uint8_t)(code < 0 ? '?' : code);
     }
     if (packed) {
         int bytes = (n * 7 + 7) / 8;
@@ -524,8 +524,7 @@ static void popup_close(int c)
     if (popup != c)
         return;
     popup = -1;
-    if (dialog_is_open())
-        dialog_close();
+    dialog_close();
 }
 
 static void settle(int c)
@@ -805,14 +804,15 @@ static void command(int c, const uint8_t *b, int n)
         return;
     uint8_t type = m.details[1], qualifier = m.details[2];
     if (type == CMD_SET_UP_MENU) {
-        k->menu = m;
-        k->menu_known = m.count > 0;
-        k->no_menu = !k->menu_known;
         k->recovering = false;
-        if (k->menu_known)
+        if (m.count) {
+            k->menu = m;
+            k->menu_known = true;
+            k->no_menu = false;
             cache_save(k, b, n);
-        else
+        } else {
             no_menu(k);
+        }
         respond(c, m.details, RESULT_OK, NULL, 0);
         if (k->view == V_LOADING || k->view == V_EMPTY || k->view == V_MENU)
             k->view = k->menu_known ? V_MENU : V_EMPTY;
@@ -1114,10 +1114,20 @@ static void on_iccid(int c, const char *reply)
     if (!s)
         return;
     s += 6;
-    sscanf(s + strspn(s, " \""), "%23[0-9A-Fa-f]", k->iccid);
+    char iccid[sizeof k->iccid] = "";
+    sscanf(s + strspn(s, " \""), "%23[0-9A-Fa-f]", iccid);
+    if (!*iccid)
+        return;
+    /* Another card in the slot: what was known was the old card's. A menu that
+     * came before any ICCID was read is this card's, for the cache. */
+    if (*k->iccid && strcmp(k->iccid, iccid)) {
+        k->menu_known = k->no_menu = false;
+        k->menu_hex[0] = 0;
+    }
+    snprintf(k->iccid, sizeof k->iccid, "%s", iccid);
     if (*k->menu_hex)
         cache_write(k, k->menu_hex);
-    if (k->menu_known || k->no_menu || !*k->iccid)
+    if (k->menu_known || k->no_menu)
         return;
     cache_load(k);
     if (k->view != V_LOADING)
@@ -1134,14 +1144,14 @@ static void on_iccid(int c, const char *reply)
 
 /* As Android shows the menu it was given at start, a card with a cached menu
  * (or none) asks for nothing; one without asks the modem to replay its last
- * command, which is often the menu, once its ICCID shows nothing is cached. */
+ * command, which is often the menu, once its ICCID shows nothing is cached.
+ * The TE profile was set when the card was first seen (tick). */
 static void activate(int c)
 {
     struct card *k = &cards[c];
     k->view = k->menu_known ? V_MENU : k->no_menu ? V_EMPTY : V_LOADING;
     k->since = lv_tick_get();
     k->recovering = false;
-    at_send(c, "AT+CUSATW=0,\"%s\"", te_profile);
     at_call(c, on_iccid, "AT+CCID");
 }
 
@@ -1193,9 +1203,12 @@ static void tick(lv_timer_t *t)
 {
     at_poll();
     trace_poll();
-    for (int c = 0; c < 2; c++) {
+    for (int c = 0; c < 2 && enabled; c++) {
         expire(c);
-        if (!cards[c].registered && present(c)) {
+        /* A card taken out is told again when one goes back in. */
+        if (!present(c))
+            cards[c].registered = false;
+        else if (!cards[c].registered) {
             cards[c].registered = true;
             at_call(c, on_iccid, "AT+CCID");
             at_send(c, "AT+CUSATW=0,\"%s\"", te_profile);
@@ -1229,18 +1242,29 @@ static bool inside(lv_obj_t *obj, lv_obj_t *parent)
     return obj != NULL;
 }
 
-static lv_obj_t *first_entry(lv_obj_t *parent)
+/* The first (or last) entry the keys can reach under parent. */
+static lv_obj_t *end_entry(lv_obj_t *parent, bool last)
 {
-    for (uint32_t i = 0; i < lv_obj_get_child_count(parent); i++) {
-        lv_obj_t *child = lv_obj_get_child(parent, (int32_t)i);
+    uint32_t n = lv_obj_get_child_count(parent);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *child = lv_obj_get_child(parent, (int32_t)(last ? n - 1 - i : i));
         if (lv_obj_is_hidden(child))
             continue;
-        if (lv_obj_get_group(child) == input_group())
+        if (lv_obj_get_group(child) == input_group() && !lv_obj_has_state(child, LV_STATE_DISABLED))
             return child;
-        if ((child = first_entry(child)))
+        if ((child = end_entry(child, last)))
             return child;
     }
     return NULL;
+}
+
+static void focus_entry(lv_obj_t *entry)
+{
+    if (!entry)
+        return;
+    lv_group_focus_obj(entry);
+    lv_obj_add_state(entry, LV_STATE_FOCUS_KEY);
+    lv_obj_scroll_to_view_recursive(entry, LV_ANIM_ON);
 }
 
 /* Left and Right only switch the card, on the switch; elsewhere they would
@@ -1257,16 +1281,22 @@ bool stk_key(const struct key_event *key)
         }
         return true;
     case KEY_KIND_UP: {
-        lv_obj_t *focused = lv_group_get_focused(input_group());
-        if (on_switcher)
+        /* The switch is above the first entry; above it the walk wraps round
+         * to the last, as on any page. */
+        if (on_switcher) {
+            on_switcher = false;
+            render();
+            focus_entry(end_entry(ui.body, true));
             return true;
-        bool below_first = focused && lv_obj_has_state(focused, LV_STATE_FOCUS_KEY) && inside(focused, ui.body) &&
-                           focused != first_entry(ui.body);
-        if (!dual || below_first)
+        }
+        lv_obj_t *focused = input_key_focus(input_group());
+        if (!dual || (focused && inside(focused, ui.body) && focused != end_entry(ui.body, false)))
             return false;
         input_defocus();
         on_switcher = true;
         render();
+        /* The switch sits at the top; scroll back up to it. */
+        lv_obj_scroll_to_view_recursive(ui.switcher, LV_ANIM_ON);
         return true;
     }
     case KEY_KIND_DOWN: {
@@ -1274,11 +1304,7 @@ bool stk_key(const struct key_event *key)
             return false;
         on_switcher = false;
         render();
-        lv_obj_t *first = first_entry(ui.body);
-        if (first) {
-            lv_group_focus_obj(first);
-            lv_obj_add_state(first, LV_STATE_FOCUS_KEY);
-        }
+        focus_entry(end_entry(ui.body, false));
         return true;
     }
     case KEY_KIND_OK:
@@ -1534,12 +1560,70 @@ void stk_create(lv_obj_t *parent)
         lv_obj_set_style_text_font(lv_obj_get_child(ui.tabs[c], 0), F(12), 0);
     }
     ui.body = ui_box(ui.root, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
-    ticking();
-    trace_open();
-    for (int c = 0; c < 2; c++)
-        if (!in_session(&cards[c]))
-            session_restore(c);
+    char option[4];
+    screen_option("stk", option, sizeof option);
+    enabled = strcmp(option, "0") != 0;
+    if (enabled) {
+        ticking();
+        trace_open();
+        for (int c = 0; c < 2; c++)
+            if (!in_session(&cards[c]))
+                session_restore(c);
+    }
     render();
+}
+
+bool stk_enabled(void)
+{
+    return enabled;
+}
+
+/* Off, nothing is asked of the SIMs and what they send is not read; a command
+ * left waiting ends as it would if the user had gone away. */
+void stk_set_enabled(bool on)
+{
+    if (on == enabled)
+        return;
+    enabled = on;
+    screen_option_set("stk", on ? "1" : "0");
+    if (on) {
+        ticking();
+        trace_open();
+        return;
+    }
+    for (int c = 0; c < 2; c++) {
+        struct card *k = &cards[c];
+        if (k->pending && k->view == V_CALL)
+            at_send(c, "AT+SPUSATCALLSETUP=0");
+        else if (k->pending)
+            respond(c, k->cmd.details, RESULT_NO_RESPONSE, NULL, 0);
+        settle(c);
+        k->registered = false;
+        k->view = V_EMPTY;
+    }
+    trace_close();
+}
+
+/* Forgets every card's menu; each is read again when the toolkit next opens. */
+void stk_clear_cache(void)
+{
+    char path[300];
+    DIR *dir = opendir(CACHE);
+    struct dirent *e;
+    while (dir && (e = readdir(dir)))
+        if (e->d_name[0] != '.') {
+            snprintf(path, sizeof path, CACHE "/%s", e->d_name);
+            unlink(path);
+        }
+    if (dir)
+        closedir(dir);
+    for (int c = 0; c < 2; c++) {
+        struct card *k = &cards[c];
+        k->menu_known = k->no_menu = false;
+        k->menu_hex[0] = 0;
+        if (k->view == V_MENU)
+            k->view = V_EMPTY;
+    }
 }
 
 /* A session left open resumes where it was, as long as its time has not run out. */

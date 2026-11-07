@@ -270,8 +270,7 @@ struct local_time local_at(double epoch)
 
 bool iso_epoch(const char *iso, double *epoch)
 {
-    int y, mo, d, h, mi, s = 0, n = 0, oh = 0, om = 0;
-    char sign = 0;
+    int y, mo, d, h, mi, s = 0, n = 0, oh = 0, om = 0, sign = 1;
     if (!iso || sscanf(iso, "%4d-%2d-%2dT%2d:%2d%n", &y, &mo, &d, &h, &mi, &n) != 5)
         return false;
     const char *rest = iso + n;
@@ -280,15 +279,14 @@ bool iso_epoch(const char *iso, double *epoch)
         rest += used;
     while (*rest == '.' || (*rest >= '0' && *rest <= '9'))
         rest++;
-    if ((*rest == '+' || *rest == '-') && sscanf(rest + 1, "%2d:%2d", &oh, &om) >= 1)
-        sign = *rest;
+    if ((*rest == '+' || *rest == '-') && sscanf(rest + 1, "%2d:%2d", &oh, &om) >= 1 && *rest == '-')
+        sign = -1;
     /* Days since 1970-01-01 by the civil calendar (Howard Hinnant's days_from_civil). */
     int yy = mo <= 2 ? y - 1 : y;
     int era = (yy >= 0 ? yy : yy - 399) / 400;
     int yoe = yy - era * 400, doy = (153 * (mo + (mo > 2 ? -3 : 9)) + 2) / 5 + d - 1;
     long days = (long)era * 146097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719468;
-    int offset = (oh * 60 + om) * 60 * (sign == '-' ? -1 : 1);
-    *epoch = (double)days * 86400 + h * 3600 + mi * 60 + s - (sign ? offset : 0);
+    *epoch = (double)days * 86400 + h * 3600 + mi * 60 + s - sign * (oh * 60 + om) * 60;
     return true;
 }
 
@@ -337,10 +335,10 @@ void usb_device_name(const cJSON *d, char *out, size_t size)
         snprintf(out, size, "%s · %s", L("USB 网卡", "USB Ethernet"), name);
 }
 
-void screen_option(const char *name, char *out, size_t size)
+void uci_get(const char *option, char *out, size_t size)
 {
-    char command[128];
-    snprintf(command, sizeof command, "uci -q get e5-infoscreen.main.%s", name);
+    char command[160];
+    snprintf(command, sizeof command, "uci -q get %s", option);
     *out = 0;
     FILE *f = popen(command, "r");
     if (!f)
@@ -349,6 +347,13 @@ void screen_option(const char *name, char *out, size_t size)
         *out = 0;
     pclose(f);
     out[strcspn(out, "\n")] = 0;
+}
+
+void screen_option(const char *name, char *out, size_t size)
+{
+    char option[96];
+    snprintf(option, sizeof option, "e5-infoscreen.main.%s", name);
+    uci_get(option, out, size);
 }
 
 void screen_option_set(const char *name, const char *value)

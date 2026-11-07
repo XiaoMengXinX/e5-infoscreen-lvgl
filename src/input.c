@@ -119,10 +119,16 @@ static bool shown(lv_obj_t *obj)
     return true;
 }
 
+lv_obj_t *input_key_focus(lv_group_t *group)
+{
+    lv_obj_t *focused = group ? lv_group_get_focused(group) : NULL;
+    return focused && lv_obj_has_state(focused, LV_STATE_FOCUS_KEY) && shown(focused) ? focused : NULL;
+}
+
 void input_focus_toward(lv_group_t *group, int dx, int dy)
 {
-    lv_obj_t *from = lv_group_get_focused(group);
-    if (!from || !lv_obj_has_state(from, LV_STATE_FOCUS_KEY) || !shown(from)) {
+    lv_obj_t *from = input_key_focus(group);
+    if (!from) {
         input_focus_move(group, dx + dy < 0 ? -1 : 1);
         return;
     }

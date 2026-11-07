@@ -5,7 +5,7 @@
 #include "theme.h"
 #include "ui.h"
 
-static lv_obj_t *list, *speed, *toolkit;
+static lv_obj_t *list, *speed, *toolkit, *toolkit_row;
 /* The row the keys were on when an app opened over the list. */
 static lv_obj_t *list_focus;
 
@@ -22,10 +22,8 @@ static void on_phone_settings(lv_event_t *e)
 static void show(lv_obj_t *view)
 {
     if (view != list && !lv_obj_is_hidden(list)) {
-        lv_obj_t *focused = lv_group_get_focused(input_group());
-        list_focus = focused && lv_obj_get_parent(focused) == list && lv_obj_has_state(focused, LV_STATE_FOCUS_KEY)
-                         ? focused
-                         : NULL;
+        lv_obj_t *focused = input_key_focus(input_group());
+        list_focus = focused && lv_obj_get_parent(focused) == list ? focused : NULL;
     }
     if (view != speed)
         speedtest_stop();
@@ -60,7 +58,7 @@ static void create(lv_obj_t *page)
     ui_row(list, "phone", L("电话", "Phone"), L("双卡拨号和来电", "Dual-SIM dialer and calls"), ROW_CHEVRON, on_phone,
            NULL);
     ui_row(list, "traffic", L("网速测试", "Speed test"), NULL, ROW_CHEVRON, on_speedtest, NULL);
-    ui_row(list, "simcard", L("SIM 卡应用", "SIM toolkit"), NULL, ROW_CHEVRON, on_toolkit, NULL);
+    toolkit_row = ui_row(list, "simcard", L("SIM 卡应用", "SIM toolkit"), NULL, ROW_CHEVRON, on_toolkit, NULL);
     ui_row(list, "settings", L("电话设置", "Phone settings"), NULL, ROW_CHEVRON, on_phone_settings, NULL);
     speed = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
     /* The dial is sized for the panel; larger display sizes would push it off. */
@@ -70,12 +68,15 @@ static void create(lv_obj_t *page)
     toolkit = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
     stk_create(toolkit);
     lv_obj_set_hidden(toolkit, true);
+    lv_obj_set_hidden(toolkit_row, !stk_enabled());
     lv_obj_set_hidden(speed, !speedtest_running());
     lv_obj_set_hidden(list, speedtest_running());
 }
 
 void apps_open_toolkit(void)
 {
+    if (!stk_enabled())
+        return;
     shell_show(PAGE_APPS);
     show(toolkit);
     stk_open();
@@ -96,6 +97,12 @@ static void hidden(void)
     show(list);
 }
 
+/* The toolkit's setting may have changed since the list was built. */
+static void shown(void)
+{
+    lv_obj_set_hidden(toolkit_row, !stk_enabled());
+}
+
 /* In an app Left and Right do not change the page. */
 static bool key(const struct key_event *k)
 {
@@ -106,5 +113,5 @@ static bool key(const struct key_event *k)
 
 const struct page_ops apps_page = {
     .icon = "apps", .zh = "应用", .en = "Apps",
-    .create = create, .hidden = hidden, .back = back, .key = key,
+    .create = create, .shown = shown, .hidden = hidden, .back = back, .key = key,
 };

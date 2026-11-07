@@ -78,8 +78,7 @@ static void order_messages(void)
     for (int i = 0; i < n; i++) {
         list[i].message = cJSON_DetachItemFromArray(messages, 0);
         list[i].order = i;
-        if (!iso_epoch(jstr(list[i].message, "time"), &list[i].epoch))
-            list[i].epoch = 0;
+        iso_epoch(jstr(list[i].message, "time"), &list[i].epoch);
     }
     qsort(list, (size_t)n, sizeof *list, newest_first);
     for (int i = 0; i < n; i++)
