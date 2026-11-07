@@ -111,7 +111,12 @@ static bool key(const struct key_event *k)
     return !lv_obj_is_hidden(speed) && (k->kind == KEY_KIND_LEFT || k->kind == KEY_KIND_RIGHT);
 }
 
+static bool held(void)
+{
+    return lv_obj_is_hidden(list);
+}
+
 const struct page_ops apps_page = {
     .icon = "apps", .zh = "应用", .en = "Apps",
-    .create = create, .shown = shown, .hidden = hidden, .back = back, .key = key,
+    .create = create, .shown = shown, .hidden = hidden, .back = back, .key = key, .held = held,
 };

@@ -634,14 +634,17 @@ static void slide_done(lv_anim_t *a)
         lv_obj_set_hidden(obj, true);
 }
 
-static void slide(lv_obj_t *obj, int32_t from, int32_t to)
+/* Slides a page from where it is, in a time for the distance left. */
+static void slide(lv_obj_t *obj, int32_t to)
 {
+    lv_anim_delete(obj, slide_x);
+    int32_t from = lv_obj_get_style_translate_x(obj, 0), w = LV_MAX(lv_obj_get_width(ui.content), 1);
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, obj);
     lv_anim_set_exec_cb(&a, slide_x);
     lv_anim_set_values(&a, from, to);
-    lv_anim_set_duration(&a, 280);
+    lv_anim_set_duration(&a, LV_MAX(120, 280 * LV_MIN(LV_ABS(to - from), w) / w));
     lv_anim_set_path_cb(&a, ui_ease_out);
     lv_anim_set_completed_cb(&a, slide_done);
     lv_anim_start(&a);
@@ -657,8 +660,10 @@ void shell_show(enum page page)
             page_ops[previous]->hidden();
         lv_anim_delete(old, slide_x);
         lv_anim_delete(now, slide_x);
+        bool was_hidden = lv_obj_is_hidden(now);
         lv_obj_set_hidden(now, false);
-        lv_obj_scroll_to_y(now, 0, LV_ANIM_OFF);
+        if (was_hidden)
+            lv_obj_scroll_to_y(now, 0, LV_ANIM_OFF);
         /* Opening a slotted page from outside the bar slides the pages the way the
          * waiting pill comes in, so both move together. */
         if (step_dir)
@@ -668,11 +673,16 @@ void shell_show(enum page page)
         else
             slide_dir = page_position(page) > page_position(previous) ? 1 : -1;
         if (theme.motion) {
+            /* A page a drag has brought in carries on from there. */
             int32_t w = lv_obj_get_width(ui.content);
-            slide(old, 0, -slide_dir * w);
-            slide(now, slide_dir * w, 0);
+            if (was_hidden || lv_obj_get_style_translate_x(now, 0) * slide_dir <= 0)
+                slide_x(now, slide_dir * w);
+            slide(old, -slide_dir * w);
+            slide(now, 0);
         } else {
             lv_obj_set_hidden(old, true);
+            slide_x(old, 0);
+            slide_x(now, 0);
         }
     }
     input_defocus();
@@ -699,12 +709,17 @@ static void navigate(int page)
     idle_reset();
 }
 
-void shell_step(int delta)
+static int page_beside(int delta)
 {
     int order[PAGE_COUNT];
     int n = page_order(order), at = page_position(app.page);
+    return order[(at + delta + n) % n];
+}
+
+void shell_step(int delta)
+{
     step_dir = delta > 0 ? 1 : -1;
-    navigate(order[(at + delta + n) % n]);
+    navigate(page_beside(delta));
     step_dir = 0;
 }
 
@@ -1328,44 +1343,120 @@ void shell_touch_press(void)
         page_ops[app.page]->touch();
 }
 
-/* A horizontal swipe changes the page; once a drag goes vertical, it stays a scroll. */
+/* A horizontal drag carries the page and the one beside it with the finger, and
+ * on release goes on to that page or back; once a drag goes vertical, it stays a
+ * scroll. */
 static struct {
     bool active;
     char axis;
     lv_point_t start;
     uint32_t time;
+    enum page page;
+    /* The page showing beside the dragged one, or -1. */
+    int peer;
+    /* Where the page sat when the drag took it, and where it is now. */
+    int32_t base, at;
 } swipe;
+
+static void peer_park(void)
+{
+    if (swipe.peer >= 0 && swipe.peer != (int)app.page) {
+        lv_obj_set_hidden(ui.pages[swipe.peer], true);
+        slide_x(ui.pages[swipe.peer], 0);
+    }
+    swipe.peer = -1;
+}
+
+static void swipe_drag(int32_t dx)
+{
+    int32_t w = lv_obj_get_width(ui.content);
+    swipe.at = LV_CLAMP(-w, swipe.base + dx, w);
+    int peer = swipe.at < 0 ? page_beside(1) : swipe.at > 0 ? page_beside(-1) : -1;
+    if (peer != swipe.peer) {
+        peer_park();
+        if (peer >= 0) {
+            lv_anim_delete(ui.pages[peer], slide_x);
+            lv_obj_set_hidden(ui.pages[peer], false);
+            lv_obj_scroll_to_y(ui.pages[peer], 0, LV_ANIM_OFF);
+        }
+        swipe.peer = peer;
+    }
+    slide_x(ui.pages[app.page], swipe.at);
+    if (peer >= 0)
+        slide_x(ui.pages[peer], swipe.at + (swipe.at < 0 ? w : -w));
+}
+
+static void swipe_release(void)
+{
+    int32_t w = lv_obj_get_width(ui.content), dx = swipe.at - swipe.base;
+    bool flick = LV_ABS(dx) > S(30) && lv_tick_elaps(swipe.time) < 300;
+    if (swipe.at && (LV_ABS(swipe.at) > w / 3 || flick)) {
+        shell_step(swipe.at < 0 ? 1 : -1);
+        if (app.page != swipe.page) {
+            swipe.peer = -1;
+            return;
+        }
+    }
+    /* Back where it was. */
+    lv_obj_t *page = ui.pages[app.page], *peer = swipe.peer >= 0 ? ui.pages[swipe.peer] : NULL;
+    if (theme.motion) {
+        slide(page, 0);
+        if (peer)
+            slide(peer, swipe.at < 0 ? w : -w);
+        swipe.peer = -1;
+    } else {
+        slide_x(page, 0);
+        peer_park();
+    }
+}
 
 void shell_swipe(bool pressed, lv_point_t p)
 {
+    if (swipe.active && swipe.axis == 'x' && swipe.page != app.page) {
+        /* The page changed under the drag. */
+        peer_park();
+        swipe.active = false;
+    }
     if (pressed && !swipe.active) {
         idle_reset();
         lv_area_t nav;
         lv_obj_get_coords(ui.nav, &nav);
         bool in_nav = !lv_obj_is_hidden(ui.nav) && p.y >= nav.y1 && p.y <= nav.y2;
-        swipe.active = input_touch_count() == 1 && !in_nav && !lock_active() && !phone_is_open() && !power_menu_is_open() && !dialog_is_open() &&
-                       !shell_overlay_open() && lv_obj_is_hidden(ui.menu);
+        bool held = page_ops[app.page]->held && page_ops[app.page]->held();
+        swipe.active = input_touch_count() == 1 && !in_nav && !held && !lock_active() && !phone_is_open() &&
+                       !power_menu_is_open() && !dialog_is_open() && !shell_overlay_open() && lv_obj_is_hidden(ui.menu);
         swipe.axis = 0;
         swipe.start = p;
         swipe.time = lv_tick_get();
+        swipe.page = app.page;
+        swipe.peer = -1;
         return;
     }
     if (!swipe.active)
         return;
     int32_t dx = p.x - swipe.start.x, dy = p.y - swipe.start.y;
-    if (pressed) {
-        if (input_touch_count() != 1) {
-            swipe.active = false;
-        } else if (!swipe.axis && LV_MAX(LV_ABS(dx), LV_ABS(dy)) >= 8) {
-            swipe.axis = LV_ABS(dx) > LV_ABS(dy) * 3 / 2 ? 'x' : 'y';
-            if (swipe.axis == 'x')
-                lv_indev_wait_release(input_touch());
-        }
+    if (!pressed || input_touch_count() > 1) {
+        if (swipe.axis == 'x')
+            swipe_release();
+        swipe.active = false;
         return;
     }
-    swipe.active = false;
-    if (swipe.axis == 'x' && LV_ABS(dx) > 50 && LV_ABS(dx) * 2 > LV_ABS(dy) * 3 && lv_tick_elaps(swipe.time) < 800)
-        shell_step(dx < 0 ? 1 : -1);
+    if (!swipe.axis && LV_MAX(LV_ABS(dx), LV_ABS(dy)) >= 8) {
+        swipe.axis = LV_ABS(dx) > LV_ABS(dy) * 3 / 2 ? 'x' : 'y';
+        if (swipe.axis == 'y') {
+            swipe.active = false;
+            return;
+        }
+        lv_indev_wait_release(input_touch());
+        /* The drag takes the page from here, so it does not jump the first steps. */
+        lv_obj_t *page = ui.pages[app.page];
+        lv_anim_delete(page, slide_x);
+        swipe.base = lv_obj_get_style_translate_x(page, 0);
+        swipe.start = p;
+        dx = 0;
+    }
+    if (swipe.axis == 'x')
+        swipe_drag(dx);
 }
 
 /* ---------- construction ---------- */

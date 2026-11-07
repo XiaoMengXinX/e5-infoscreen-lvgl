@@ -54,6 +54,8 @@ struct page_ops {
     void (*touch)(void);
     bool (*back)(void);
     void (*top)(void);
+    /* True while the page keeps horizontal swipes, as in an open app. */
+    bool (*held)(void);
 };
 
 extern const struct page_ops overview_page, signal_page, traffic_page, sms_page, hotspot_page,
