@@ -24,8 +24,7 @@ static struct {
 
 static bool locked = true, dark, animating, first_config = true, lock_was_enabled = true;
 static uint32_t wake_at, key_armed;
-/* A finger still down when the unlock begins, as with the keys, belongs to the
- * lock until it leaves; one put down after it is the page's. */
+/* A finger down when the unlock begins stays the lock's until lifted. */
 static bool carried_touch;
 static int usage_slot = -1;
 static uint32_t usage_at;
@@ -143,7 +142,6 @@ static void anim_y(void *obj, int32_t v)
     lv_obj_set_style_opa(obj, drag_opa(v), 0);
 }
 
-/* The unlock carries the lock from where the finger left it out the top, fading out. */
 static struct {
     int32_t from, to;
     lv_opa_t opa;
@@ -271,7 +269,7 @@ static void unlock(float velocity)
     if (animating)
         return;
     carried_touch = input_touch_count() > 0;
-    /* The web screen's timing: the rest of the way at the finger's speed, within 140–320 ms. */
+    /* The web screen's timing. */
     int32_t current = lv_obj_get_style_translate_y(ui.root, 0);
     float remaining = (float)(screen_height() + current);
     uint32_t ms = theme.motion ? (uint32_t)fminf(320, fmaxf(140, remaining / fmaxf(1.5f, velocity))) : 0;

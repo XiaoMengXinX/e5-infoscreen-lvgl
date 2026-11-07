@@ -45,12 +45,10 @@ int main(int argc, char **argv)
         uint32_t wait = lv_timer_handler();
         int n = input_poll_fds(fds);
         fds[n] = (struct pollfd){.fd = api_fd(), .events = POLLIN};
-        /* Replies held through a page's fast motion run as soon as it slows, which
-         * a finger coming to rest does without an event to wake the loop. */
+        /* Held replies are retried every 20 ms: a finger coming to rest raises no event. */
         int timeout = wait == LV_NO_TIMER_READY ? -1 : (int)wait;
-        bool flush_held = api_held() && !shell_sliding();
         if (api_held())
-            timeout = flush_held ? 0 : timeout < 0 || timeout > 20 ? 20 : timeout;
+            timeout = !shell_sliding() ? 0 : timeout < 0 || timeout > 20 ? 20 : timeout;
         int ready = poll(fds, (nfds_t)n + 1, timeout);
         if (dump_requested) {
             dump_requested = 0;
@@ -59,7 +57,7 @@ int main(int argc, char **argv)
         if (ready > 0)
             input_dispatch(fds, n);
         /* Filling a page drops frames, so its replies wait while it moves fast. */
-        if ((ready > 0 && fds[n].revents & POLLIN) || flush_held)
+        if ((ready > 0 && fds[n].revents & POLLIN) || api_held())
             api_dispatch(shell_sliding());
     }
 }

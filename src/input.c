@@ -36,7 +36,7 @@ static struct {
     int x[SLOTS], y[SLOTS];
     bool legacy_down;
     lv_point_t point;
-    /* When the panel sampled the point, in monotonic ms. */
+    /* Monotonic ms. */
     double time;
     bool pressed;
 } touch = {.primary = -1};
@@ -217,11 +217,6 @@ static void open_devices(void)
         ioctl(fd, EVIOCGBIT(EV_KEY, sizeof keys), keys);
         struct device *d = &devices[device_count];
         d->fd = fd;
-        if (TEST(abs, ABS_MT_POSITION_X) || (TEST(abs, ABS_X) && TEST(keys, BTN_TOUCH))) {
-            /* Event times on the clock the drag's frames are timed by. */
-            int clock = CLOCK_MONOTONIC;
-            ioctl(fd, EVIOCSCLOCKID, &clock);
-        }
         if (TEST(abs, ABS_MT_POSITION_X)) {
             d->kind = DEVICE_TOUCH;
             ioctl(fd, EVIOCGABS(ABS_MT_POSITION_X), &d->x);
@@ -238,6 +233,11 @@ static void open_devices(void)
         } else {
             close(fd);
             continue;
+        }
+        if (d->kind == DEVICE_TOUCH) {
+            /* Touch times on the clock the frames are timed by. */
+            int clock = CLOCK_MONOTONIC;
+            ioctl(fd, EVIOCSCLOCKID, &clock);
         }
         device_count++;
     }

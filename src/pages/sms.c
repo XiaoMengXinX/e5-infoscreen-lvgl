@@ -14,18 +14,15 @@ static struct {
     lv_obj_t *list, *view, *from, *time, *text, *delete;
 } ui;
 
-/* As in a browser, pulling the list down from its top reads the messages
- * again: the list follows the finger with growing resistance, and while it
- * reads, it waits pulled open with a spinner above it. */
+/* Pull to refresh: the list stays pulled open while it reads. */
 #define PULL_REACH S(140)
 #define PULL_ARM S(56)
 #define PULL_HOLD S(48)
-/* The shortest a refresh shows, so a quick one does not flash. */
+/* The shortest time a refresh shows, so a quick one does not flash. */
 #define PULL_SHOWN_MS 600
 
 static struct {
     lv_obj_t *page, *hint, *label, *spinner;
-    /* A touch is down; it pulls the list; a read is under way. */
     bool tracking, pulling, refreshing;
     lv_point_t start;
     /* Where the finger was as the list reached its top. */
@@ -277,8 +274,7 @@ static void mark_read(void)
     api_post("/sms-read", NULL, read_done, cJSON_Duplicate(unread, true));
 }
 
-/* The hint sits in the gap above the list and scrolls with it; a floating
- * object stays put as the page scrolls, so it is moved by the scroll. */
+/* A floating object does not scroll, so the hint follows the scroll by hand. */
 static void pull_hint_place(void)
 {
     lv_obj_set_hidden(pull.hint, pull.offset <= 0);
@@ -288,8 +284,7 @@ static void pull_hint_place(void)
                          lv_obj_get_scroll_y(pull.page));
 }
 
-/* A margin, not a translation, opens the gap, so the whole list stays in reach
- * of a scroll while it waits open. */
+/* A margin keeps the whole list in reach of a scroll while it waits open. */
 static void pull_place(int32_t offset)
 {
     pull.offset = offset;
@@ -331,7 +326,6 @@ static void pull_label(void)
                                                       : L("↓ 下拉刷新", "↓ Pull to refresh"));
 }
 
-/* The list closes once the read is back, after showing it at least a moment. */
 static void pull_done(bool ok)
 {
     if (!pull.refreshing)
@@ -461,7 +455,7 @@ void sms_check(const cJSON *st)
     load(fresh);
 }
 
-/* Rubber-band resistance: the list moves less the further it is pulled, toward PULL_REACH. */
+/* Rubber-band resistance toward PULL_REACH. */
 static int32_t resisted(int32_t travel)
 {
     float reach = (float)PULL_REACH;
@@ -473,7 +467,7 @@ static void drag(bool pressed, lv_point_t p)
     if (!pressed) {
         if (pull.pulling) {
             pull.pulling = false;
-            if (pull.offset >= PULL_ARM && !pull.refreshing) {
+            if (pull.offset >= PULL_ARM) {
                 pull.refreshing = true;
                 pull.since = lv_tick_get();
                 pull_label();
@@ -493,7 +487,7 @@ static void drag(bool pressed, lv_point_t p)
     if (open_id >= 0 || pull.refreshing)
         return;
     if (!pull.pulling) {
-        /* A scroll up to the top hands over to the pull from where it got there. */
+        /* A scroll that reaches the top becomes a pull from there. */
         if (lv_obj_get_scroll_y(pull.page) > 0) {
             pull.anchor = p.y;
             return;
@@ -512,7 +506,6 @@ static void drag(bool pressed, lv_point_t p)
 static void create(lv_obj_t *page)
 {
     pull.page = page;
-    /* The pull is the list's own; the page does not stretch past its ends. */
     lv_obj_set_scroll_elastic(page, false);
     pull.hint = ui_box(page, LV_FLEX_FLOW_ROW, 6);
     lv_obj_set_width(pull.hint, LV_SIZE_CONTENT);

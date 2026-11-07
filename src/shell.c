@@ -384,8 +384,7 @@ void idle_reset(void)
 static void clock_tick(lv_timer_t *t);
 static void render_status(void);
 
-/* A dark panel draws nothing, or a spinner would redraw it every frame; it
- * wakes to a whole new frame. */
+/* A dark panel draws nothing and wakes to a whole new frame. */
 static void sync_drawing(void)
 {
     static bool drawing = true;
@@ -461,7 +460,6 @@ static double now_ms(void)
     return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
 }
 
-
 static void navigate(int page);
 
 static void nav_highlight(int slot)
@@ -470,14 +468,11 @@ static void nav_highlight(int slot)
         lv_obj_set_style_text_color(ui.nav_buttons[i], i == slot ? theme.accent : theme.dim, 0);
 }
 
-/* The glass pill rides a spring: a new target mid-flight keeps its speed, a
- * drag hands it the finger's, it settles with a slight overshoot, and it
- * stretches along its motion like a drop. It grows while a finger carries it,
- * and keeps that shape until let go. */
+/* The glass pill moves on a spring, so a new target keeps its speed. */
 static struct {
-    /* The pill's centre and speed, px and px/s, and where it is bound. */
+    /* Centre in px, speed in px/s. */
     float x, v, target;
-    /* 0 at rest to 1 while carried, and its speed. */
+    /* 1 while a finger carries the pill. */
     float grow, grow_v;
     double last;
     lv_timer_t *timer;
@@ -486,7 +481,6 @@ static struct {
 static void pill_render(void)
 {
     lv_obj_t *b = ui.nav_buttons[0];
-    /* A carried pill keeps its shape; the stretch comes in as it lets go. */
     float stretch = fminf(fabsf(pill.v) * 0.012f, (float)S(18)) * (1 - pill.grow);
     int32_t w = lv_obj_get_width(b) + lroundf(pill.grow * S(10) + stretch);
     int32_t h = lv_obj_get_height(b) + lroundf(pill.grow * S(4) - stretch * 0.3f);
@@ -494,7 +488,7 @@ static void pill_render(void)
     lv_obj_set_pos(ui.nav_pill, lroundf(pill.x) - w / 2, lv_obj_get_y(b) + (lv_obj_get_height(b) - h) / 2);
 }
 
-/* One step of a damped spring: response in seconds, damping 1 for none past the target. */
+/* One step of a spring; response is its period in seconds, damping 1 is critical. */
 static void spring(float *x, float *v, float target, float response, float damping, float dt)
 {
     float w = 2 * 3.14159265f / response;
@@ -508,8 +502,7 @@ static void pill_tick(lv_timer_t *t)
     float dt = fminf((float)(now - pill.last) / 1000, 0.05f);
     pill.last = now;
     float grown = nav_drag.dragging ? 1 : 0;
-    /* A carried pill chases the finger on a stiff spring, which evens out the
-     * panel's uneven reports and gives the pill a smooth speed to hand on. */
+    /* A stiff spring under the finger evens out the panel's uneven reports. */
     float response = nav_drag.dragging ? 0.1f : 0.36f, damping = nav_drag.dragging ? 1 : 0.68f;
     for (; dt > 0; dt -= 0.004f) {
         float step = fminf(dt, 0.004f);
@@ -534,7 +527,6 @@ static void pill_wake(void)
     }
 }
 
-/* Sends the pill's centre to x; without motion it is there at once. */
 static void pill_aim(float x, bool animate)
 {
     pill.target = x;
@@ -714,11 +706,9 @@ static void slide_done(lv_anim_t *a)
 /* The speed, in px/ms, a released drag hands to the slide it starts. */
 static float slide_speed;
 
-/* Slides a page from where it is. Handed a finger's speed toward its end, it
- * starts at that speed and settles; from rest it gathers speed first. */
+/* Slides a page from where it is, starting at speed when one is given. */
 static void slide(lv_obj_t *obj, int32_t to, float speed)
 {
-    lv_anim_delete(obj, slide_x);
     int32_t from = lv_obj_get_style_translate_x(obj, 0), w = LV_MAX(lv_obj_get_width(ui.content), 1);
     int32_t distance = LV_MIN(LV_ABS(to - from), w);
     lv_anim_t a;
@@ -1432,12 +1422,11 @@ void shell_touch_press(void)
         page_ops[app.page]->touch();
 }
 
-/* A horizontal drag carries the page and the one beside it with the finger, and
- * on release goes on to that page or back; once a drag goes vertical, it stays a
- * scroll. The panel reports a little under the display's rate and unevenly, so
- * each frame places the page where the finger's recent speed puts it by then. */
+/* A horizontal drag carries the page and the one beside it. The panel reports
+ * slower than the display and unevenly, so each frame places the page where the
+ * finger's recent speed puts it. */
 #define SWIPE_SAMPLES 8
-/* The span the speed is taken over, and how far past the last sample it reaches. */
+/* The span the speed is taken over, and the furthest it is projected. */
 #define SWIPE_SPEED_MS 60
 #define SWIPE_AHEAD_MS 20
 /* A release faster than this, in px/ms, goes the way the finger was moving. */
@@ -1447,7 +1436,7 @@ static struct {
     bool active;
     /* 'x' for a page swipe, 'y' once the touch is the page's own; 0 undecided. */
     char axis;
-    /* The page's own gestures see the touch. */
+    /* The page's drag hook sees the touch. */
     bool forward;
     lv_point_t start;
     enum page page;
@@ -1460,7 +1449,7 @@ static struct {
         int32_t x;
     } samples[SWIPE_SAMPLES];
     int count;
-} swipe;
+} swipe = {.peer = -1};
 
 static bool swipe_dragging(void)
 {
@@ -1525,8 +1514,7 @@ static void swipe_place(double now)
         slide_x(ui.pages[peer], swipe.at + (swipe.at < 0 ? w : -w));
 }
 
-/* Each frame of a drag places the pages for the moment it is drawn, and asks for
- * the next while the finger is still taken to be moving. */
+/* Places the pages as each frame starts, and asks for another while the finger moves. */
 static void swipe_frame(lv_event_t *e)
 {
     if (!swipe_dragging())
@@ -1554,7 +1542,6 @@ static void swipe_release(void)
             return;
         }
     }
-    /* Back where it was. */
     lv_obj_t *page = ui.pages[app.page], *peer = swipe.peer >= 0 ? ui.pages[swipe.peer] : NULL;
     if (theme.motion) {
         float back = speed && !onward ? fabsf(speed) : 0;
@@ -1575,7 +1562,7 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
         peer_park();
         swipe.active = false;
     }
-    if (swipe.forward && (swipe.axis == 'x' || swipe.page != app.page || !pressed || input_touch_count() > 1)) {
+    if (swipe.forward && (swipe.page != app.page || !pressed || input_touch_count() > 1)) {
         swipe.forward = false;
         page_ops[swipe.page]->drag(false, p);
     } else if (swipe.forward) {
@@ -1589,8 +1576,7 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
         return;
     }
     if (!swipe.active && !swipe.axis) {
-        /* A touch that began over the lock or a sheet is looked at again until
-         * one of the page's own begins. */
+        /* Checked again on each point, so a touch begun over the lock can still swipe. */
         idle_reset();
         lv_area_t nav;
         lv_obj_get_coords(ui.nav, &nav);
@@ -1601,7 +1587,6 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
         swipe.forward = free && page_ops[app.page]->drag;
         swipe.start = p;
         swipe.page = app.page;
-        swipe.peer = -1;
         swipe.count = 0;
         if (swipe.forward)
             page_ops[app.page]->drag(true, p);
@@ -1628,7 +1613,7 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
             swipe.forward = false;
             page_ops[app.page]->drag(false, p);
         }
-        /* The drag takes the page from here, so it does not jump the first steps. */
+        /* From here, so the page does not jump by the threshold. */
         lv_obj_t *page = ui.pages[app.page];
         lv_anim_delete(page, slide_x);
         swipe.base = lv_obj_get_style_translate_x(page, 0);
@@ -1644,7 +1629,7 @@ bool shell_sliding(void)
 {
     if (swipe_dragging())
         return swipe_speed(now_ms()) != 0;
-    /* A slide's last stretch moves a few pixels a frame, where a late one does not show. */
+    /* A late frame in a slide's last stretch does not show. */
     for (int i = 0; i < PAGE_COUNT; i++) {
         lv_anim_t *a = lv_anim_get(ui.pages[i], slide_x);
         if (a && a->act_time < (int32_t)(a->duration * 3 / 5))

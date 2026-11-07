@@ -12,8 +12,7 @@ void input_init(lv_display_t *display);
 int input_poll_fds(struct pollfd *fds);
 void input_dispatch(const struct pollfd *fds, int count);
 int input_touch_count(void);
-/* The rest of the touch is a gesture of the screen's own: the widget it
- * pressed lets go, and LVGL ignores it until it ends. */
+/* Releases the pressed widget and keeps the rest of the touch from LVGL. */
 void input_touch_take(void);
 void input_focus_key(uint32_t key);
 void input_defocus(void);

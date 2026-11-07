@@ -12,8 +12,7 @@ typedef void (*api_event_cb)(cJSON *event);
 
 void api_init(void);
 int api_fd(void);
-/* Runs the callbacks of finished requests. With hold, replies wait for a later
- * call without it; call events never wait. */
+/* With hold, replies other than call events wait for a call without it. */
 void api_dispatch(bool hold);
 bool api_held(void);
 

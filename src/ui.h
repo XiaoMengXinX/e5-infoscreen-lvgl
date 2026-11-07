@@ -40,10 +40,10 @@ void ui_primary(lv_obj_t *button);
 /* The gap between the blocks of a list or a nested view, tighter when compact. */
 int ui_stack_gap(void);
 
-/* Cubic ease-out: it starts at three times the average speed, so an animation that
- * takes over from a finger can be timed to match the finger's speed. */
 /* The progress at time t, 0 to 1, of CSS cubic-bezier(x1, y1, x2, y2). */
 float ui_bezier(float t, float x1, float y1, float x2, float y2);
+/* Cubic ease-out: it starts at three times the average speed, so an animation that
+ * takes over from a finger can be timed to match the finger's speed. */
 int32_t ui_ease_out(const lv_anim_t *a);
-/* Gathers speed over the first frames, then settles: for a slide that starts from rest. */
+/* For a slide that starts from rest. */
 int32_t ui_ease_slide(const lv_anim_t *a);

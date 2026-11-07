@@ -56,8 +56,7 @@ struct page_ops {
     void (*top)(void);
     /* True while the page keeps horizontal swipes, as in an open app. */
     bool (*held)(void);
-    /* Each point of a touch on the page that no page swipe has taken, for the
-     * page's own gestures; pressed is false once it ends. */
+    /* The points of a touch no page swipe has taken; pressed is false at its end. */
     void (*drag)(bool pressed, lv_point_t point);
 };
 
@@ -87,7 +86,7 @@ void shell_title(void);
 void shell_key(const struct key_event *key);
 void shell_touch_press(void);
 bool shell_touch_allowed(void);
-/* A touch point the panel sampled at time, in monotonic ms. */
+/* time is when the panel sampled the point, in monotonic ms. */
 void shell_swipe(bool pressed, lv_point_t point, double time);
 /* True while a page moves fast enough that a late frame would show. */
 bool shell_sliding(void);
