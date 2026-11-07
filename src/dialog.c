@@ -5,6 +5,7 @@
 
 static lv_obj_t *root, *sheet;
 static lv_group_t *group, *previous_group;
+static void (*closed)(void);
 
 bool dialog_is_open(void)
 {
@@ -15,12 +16,26 @@ void dialog_close(void)
 {
     if (!root)
         return;
+    void (*cb)(void) = closed;
+    closed = NULL;
     lv_obj_delete(root);
     root = NULL;
     lv_group_delete(group);
     group = NULL;
     input_set_group(previous_group);
     idle_reset();
+    if (cb)
+        cb();
+}
+
+lv_obj_t *dialog_sheet(void)
+{
+    return sheet;
+}
+
+void dialog_on_close(void (*cb)(void))
+{
+    closed = cb;
 }
 
 static void on_backdrop(lv_event_t *e)

@@ -22,20 +22,31 @@
 #include "util.h"
 
 /* The version comes from jsDelivr: the proxies answer releases/latest with a
- * relative redirect that uclient-fetch cannot follow. */
+ * relative redirect that uclient-fetch cannot follow. Lines starting with @
+ * name the step for the progress dialog; the archive's download shows its
+ * progress. */
 static const char global_install[] =
     "fetch() {\n"
-    "  if command -v curl >/dev/null; then curl -fsSL --connect-timeout 10 --max-time 300 -o \"$2\" \"$1\"\n"
-    "  else timeout 300 uclient-fetch -q -T 10 -O \"$2\" \"$1\"; fi\n"
+    "  if command -v curl >/dev/null; then\n"
+    "    [ -n \"$3\" ] && quiet=-# || quiet=-sS\n"
+    "    curl -fL $quiet --connect-timeout 10 --max-time 300 -o \"$2\" \"$1\"\n"
+    "  else\n"
+    "    [ -n \"$3\" ] && quiet= || quiet=-q\n"
+    "    timeout 300 uclient-fetch $quiet -T 10 -O \"$2\" \"$1\"\n"
+    "  fi\n"
     "}\n"
     "dir=$(mktemp -d) && trap 'rm -rf \"$dir\"' EXIT && cd \"$dir\" || exit 1\n"
+    "echo @check\n"
     "fetch https://data.jsdelivr.com/v1/packages/gh/XiaoMengXinX/globalspeedtest-go/resolved latest &&\n"
     "  version=$(jsonfilter -i latest -e @.version) || exit 1\n"
     "release=https://github.com/XiaoMengXinX/globalspeedtest-go/releases/download/v$version\n"
     "name=globalspeedtest-go_${version}_Linux_arm64.tar.gz\n"
     "for mirror in https://gh-proxy.org/ https://cdn.gh-proxy.org/ https://ghproxy.net/ ''; do\n"
-    "  fetch \"$mirror$release/checksums.txt\" sums && fetch \"$mirror$release/$name\" \"$name\" &&\n"
+    "  host=${mirror#https://}\n"
+    "  echo \"@download $version ${host%/}\"\n"
+    "  fetch \"$mirror$release/checksums.txt\" sums && fetch \"$mirror$release/$name\" \"$name\" progress &&\n"
     "    grep \" $name\\$\" sums | sha256sum -c -s || continue\n"
+    "  echo @install\n"
     "  tar -xzOf \"$name\" globalspeedtest-go > /usr/bin/globalspeedtest-go.part &&\n"
     "    chmod 755 /usr/bin/globalspeedtest-go.part &&\n"
     "    mv /usr/bin/globalspeedtest-go.part /usr/bin/globalspeedtest-go\n"
@@ -43,15 +54,26 @@ static const char global_install[] =
     "done\n"
     "exit 1\n";
 
+/* speedtest-go is an OpenWrt package; a feed that cannot be reached leaves the
+ * others usable. apk writes its progress as "done/total" lines. */
+static const char speedtest_install[] =
+    "echo @update\n"
+    "apk update --progress-fd 3 3>&1 >/dev/null 2>&1\n"
+    "echo @add\n"
+    "exec apk add --progress-fd 3 speedtest-go 3>&1 >/dev/null 2>&1\n";
+
 struct backend {
     const char *id, *zh, *en;
     const char *program;
     const char *install;
+    const char *source_zh, *source_en;
 };
 
 static const struct backend backends[] = {
-    {"global", "全球网测", "CAICT", "/usr/bin/globalspeedtest-go", global_install},
-    {"speedtest", "speedtest.net", "speedtest.net", "/usr/bin/speedtest-go", NULL},
+    {"global", "全球网测", "CAICT", "/usr/bin/globalspeedtest-go", global_install, "从 GitHub 下载最新版本并安装",
+     "Download the latest release from GitHub and install it"},
+    {"speedtest", "speedtest.net", "speedtest.net", "/usr/bin/speedtest-go", speedtest_install, "从 OpenWrt 软件源安装",
+     "Install it from the OpenWrt package feed"},
 };
 #define BACKENDS ((int)(sizeof backends / sizeof *backends))
 static const struct backend *backend = &backends[0];
@@ -79,6 +101,12 @@ static struct {
     lv_obj_t *marks[SEGMENTS + 1];
 } ui;
 static lv_timer_t *reader;
+
+/* The install dialog: the step, and the progress of the download. */
+static struct {
+    lv_obj_t *step, *button;
+    struct ui_meter meter;
+} setup;
 
 static float gauge_position(double mbps)
 {
@@ -313,6 +341,8 @@ static void parse(const char *line)
     paint();
 }
 
+static void install_line(const char *line);
+
 static void take_line(void)
 {
     char clean[sizeof test.line];
@@ -333,7 +363,9 @@ static void take_line(void)
     }
     clean[n] = 0;
     test.len = 0;
-    if (n)
+    if (test.phase == INSTALLING)
+        install_line(clean);
+    else if (n)
         parse(clean);
 }
 
@@ -361,12 +393,14 @@ static void finish(void)
     int status = reap();
     bool exited = WIFEXITED(status) && WEXITSTATUS(status) == 0;
     if (test.phase == INSTALLING) {
+        test.phase = IDLE;
         if (exited) {
+            dialog_close();
             run_test();
             return;
         }
-        test.phase = IDLE;
-        toast("%s", L("下载安装失败，请检查网络后重试", "The download failed; check the network and retry"));
+        ui_set_text(setup.step, L("安装失败，请检查网络后重试", "The install failed; check the network and retry"));
+        ui_button_text(setup.button, L("关闭", "Close"));
         paint();
         return;
     }
@@ -379,6 +413,9 @@ static void finish(void)
 
 static void poll_output(lv_timer_t *t)
 {
+    /* An install may be silent for a while; the screen stays up until it ends. */
+    if (test.phase == INSTALLING)
+        idle_reset();
     char buf[1024];
     for (;;) {
         ssize_t n = read(test.fd, buf, sizeof buf);
@@ -420,9 +457,69 @@ static void run(enum phase phase, char *const argv[])
     paint();
 }
 
-static void on_install(lv_event_t *e)
+static void install_progress(int percent)
+{
+    char text[8];
+    snprintf(text, sizeof text, "%d%%", percent);
+    ui_meter_set(&setup.meter, text, percent, theme.accent);
+}
+
+static void install_line(const char *line)
+{
+    unsigned long long done, total;
+    if (!strcmp(line, "@check")) {
+        ui_set_text(setup.step, L("正在获取最新版本…", "Finding the latest version…"));
+    } else if (!strcmp(line, "@update")) {
+        ui_set_text(setup.step, L("正在更新软件源…", "Updating the package feeds…"));
+    } else if (!strcmp(line, "@add")) {
+        ui_set_text(setup.step, L("正在下载安装…", "Downloading and installing…"));
+        install_progress(0);
+    } else if (!strncmp(line, "@download ", 10)) {
+        char version[32] = "", host[64] = "", step[128];
+        sscanf(line + 10, "%31s %63s", version, host);
+        snprintf(step, sizeof step, L("正在从 %s 下载 v%s…", "Downloading v%2$s from %1$s…"), *host ? host : "github.com",
+                 version);
+        ui_set_text(setup.step, step);
+        install_progress(0);
+    } else if (!strcmp(line, "@install")) {
+        ui_set_text(setup.step, L("正在安装…", "Installing…"));
+    } else if (sscanf(line, "%llu/%llu", &done, &total) == 2 && total) {
+        install_progress((int)(done * 100 / total));
+    } else if (strchr(line, '%')) {
+        /* curl's bar ends "  42.3%"; uclient-fetch's has " 42% |". */
+        const char *mark = strrchr(line, '%'), *digits = mark;
+        while (digits > line && ((digits[-1] >= '0' && digits[-1] <= '9') || digits[-1] == '.'))
+            digits--;
+        if (digits != mark)
+            install_progress((int)strtod(digits, NULL));
+    }
+}
+
+static void on_close(lv_event_t *e)
 {
     dialog_close();
+}
+
+static void install_closed(void)
+{
+    if (test.phase == INSTALLING)
+        speedtest_stop();
+}
+
+static void on_install(lv_event_t *e)
+{
+    const char *name = strrchr(backend->program, '/') + 1;
+    char title[64];
+    snprintf(title, sizeof title, L("正在安装 %s", "Installing %s"), name);
+    dialog_open(title, NULL);
+    setup = (typeof(setup)){0};
+    lv_obj_t *sheet = dialog_sheet();
+    setup.step = ui_text(sheet, 13, false, theme.text);
+    lv_obj_set_width(setup.step, LV_PCT(100));
+    lv_label_set_long_mode(setup.step, LV_LABEL_LONG_MODE_WRAP);
+    setup.meter = ui_meter(sheet, L("进度", "Progress"));
+    setup.button = dialog_button(L("取消", "Cancel"), on_close, NULL);
+    dialog_on_close(install_closed);
     run(INSTALLING, (char *const[]){"/bin/sh", "-c", (char *)backend->install, NULL});
 }
 
@@ -435,14 +532,9 @@ static void start(void)
         return;
     }
     const char *name = strrchr(backend->program, '/') + 1;
-    if (!backend->install) {
-        toast(L("未安装 %s", "%s is not installed"), name);
-        return;
-    }
-    char note[160];
-    snprintf(note, sizeof note,
-             L("%s需要 %s，是否从 GitHub 下载最新版本并安装？", "%s needs %s. Download the latest release from GitHub and install it?"),
-             L(backend->zh, backend->en), name);
+    char note[192];
+    snprintf(note, sizeof note, L("%s需要 %s，是否%s？", "%s needs %s. %s?"), L(backend->zh, backend->en), name,
+             L(backend->source_zh, backend->source_en));
     dialog_open(L("安装测速程序", "Install the speed test"), note);
     dialog_button(L("下载安装", "Install"), on_install, NULL);
     dialog_cancel();

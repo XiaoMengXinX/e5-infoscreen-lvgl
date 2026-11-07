@@ -131,6 +131,10 @@ void dialog_open(const char *title, const char *note);
 lv_obj_t *dialog_button(const char *text, lv_event_cb_t cb, void *ctx);
 void dialog_cancel(void);
 void dialog_close(void);
+/* The open dialog's sheet, for content above its buttons. */
+lv_obj_t *dialog_sheet(void);
+/* Called once the open dialog closes, however it closes. */
+void dialog_on_close(void (*cb)(void));
 bool dialog_is_open(void);
 bool dialog_key(const struct key_event *key);
 
