@@ -1,3 +1,4 @@
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,6 +13,25 @@
 static struct {
     lv_obj_t *list, *view, *from, *time, *text, *delete;
 } ui;
+
+/* As in a browser, pulling the list down from its top reads the messages
+ * again: the list follows the finger with growing resistance, and while it
+ * reads, it waits pulled open with a spinner above it. */
+#define PULL_REACH S(140)
+#define PULL_ARM S(56)
+#define PULL_HOLD S(48)
+/* The shortest a refresh shows, so a quick one does not flash. */
+#define PULL_SHOWN_MS 600
+
+static struct {
+    lv_obj_t *page, *hint, *label, *spinner;
+    /* A touch is down; it pulls the list; a read is under way. */
+    bool tracking, pulling, refreshing;
+    lv_point_t start;
+    /* Where the finger was as the list reached its top. */
+    int32_t anchor, offset;
+    uint32_t since;
+} pull;
 
 static cJSON *messages;
 static double open_id = -1;
@@ -257,11 +277,85 @@ static void mark_read(void)
     api_post("/sms-read", NULL, read_done, cJSON_Duplicate(unread, true));
 }
 
+/* The hint sits in the gap above the list and scrolls with it; a floating
+ * object stays put as the page scrolls, so it is moved by the scroll. */
+static void pull_hint_place(void)
+{
+    lv_obj_set_hidden(pull.hint, pull.offset <= 0);
+    if (pull.offset > 0)
+        lv_obj_align(pull.hint, LV_ALIGN_TOP_MID, 0,
+                     (pull.offset - lv_obj_get_height(pull.hint)) / 2 - lv_obj_get_style_pad_top(pull.page, 0) -
+                         lv_obj_get_scroll_y(pull.page));
+}
+
+/* A margin, not a translation, opens the gap, so the whole list stays in reach
+ * of a scroll while it waits open. */
+static void pull_place(int32_t offset)
+{
+    pull.offset = offset;
+    lv_obj_set_style_margin_top(ui.list, offset, 0);
+    pull_hint_place();
+}
+
+static void on_scroll(lv_event_t *e)
+{
+    pull_hint_place();
+}
+
+static void pull_step(void *var, int32_t v)
+{
+    pull_place(v);
+}
+
+static void pull_to(int32_t target, uint32_t delay)
+{
+    lv_anim_delete(&pull, pull_step);
+    if (pull.offset == target)
+        return;
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, &pull);
+    lv_anim_set_exec_cb(&a, pull_step);
+    lv_anim_set_values(&a, pull.offset, target);
+    lv_anim_set_duration(&a, theme.motion ? 300 : 0);
+    lv_anim_set_delay(&a, delay);
+    lv_anim_set_path_cb(&a, ui_ease_out);
+    lv_anim_start(&a);
+}
+
+static void pull_label(void)
+{
+    lv_obj_set_hidden(pull.spinner, !pull.refreshing);
+    ui_set_text(pull.label, pull.refreshing           ? L("正在刷新", "Refreshing")
+                            : pull.offset >= PULL_ARM ? L("↑ 松开刷新", "↑ Release to refresh")
+                                                      : L("↓ 下拉刷新", "↓ Pull to refresh"));
+}
+
+/* The list closes once the read is back, after showing it at least a moment. */
+static void pull_done(bool ok)
+{
+    if (!pull.refreshing)
+        return;
+    pull.refreshing = false;
+    if (ok)
+        toast("%s", L("已刷新", "Refreshed"));
+    uint32_t shown = lv_tick_elaps(pull.since);
+    pull_to(0, shown < PULL_SHOWN_MS ? PULL_SHOWN_MS - shown : 0);
+}
+
+static void pull_reset(void)
+{
+    lv_anim_delete(&pull, pull_step);
+    pull.tracking = pull.pulling = pull.refreshing = false;
+    pull_place(0);
+}
+
 static void loaded(int status, cJSON *r, void *ctx)
 {
     shell_page_loading(PAGE_SMS, false);
     bool ok = api_read_ok(status, r);
     shell_page_error(PAGE_SMS, !ok);
+    pull_done(ok);
     if (ok) {
         cJSON_Delete(messages);
         messages = cJSON_Duplicate(jget(r, "messages"), true);
@@ -367,9 +461,73 @@ void sms_check(const cJSON *st)
     load(fresh);
 }
 
+/* Rubber-band resistance: the list moves less the further it is pulled, toward PULL_REACH. */
+static int32_t resisted(int32_t travel)
+{
+    float reach = (float)PULL_REACH;
+    return (int32_t)lroundf((1 - 1 / ((float)travel * 0.55f / reach + 1)) * reach);
+}
+
+static void drag(bool pressed, lv_point_t p)
+{
+    if (!pressed) {
+        if (pull.pulling) {
+            pull.pulling = false;
+            if (pull.offset >= PULL_ARM && !pull.refreshing) {
+                pull.refreshing = true;
+                pull.since = lv_tick_get();
+                pull_label();
+                load(-1);
+            }
+            pull_to(pull.refreshing ? PULL_HOLD : 0, 0);
+        }
+        pull.tracking = false;
+        return;
+    }
+    if (!pull.tracking) {
+        pull.tracking = true;
+        pull.start = p;
+        pull.anchor = p.y;
+        return;
+    }
+    if (open_id >= 0 || pull.refreshing)
+        return;
+    if (!pull.pulling) {
+        /* A scroll up to the top hands over to the pull from where it got there. */
+        if (lv_obj_get_scroll_y(pull.page) > 0) {
+            pull.anchor = p.y;
+            return;
+        }
+        int32_t dy = p.y - pull.anchor, dx = p.x - pull.start.x;
+        if (dy < 8 || dy * 2 < LV_ABS(dx) * 3)
+            return;
+        pull.pulling = true;
+        input_touch_take();
+        lv_anim_delete(&pull, pull_step);
+    }
+    pull_place(resisted(LV_MAX(0, p.y - pull.anchor)));
+    pull_label();
+}
+
 static void create(lv_obj_t *page)
 {
+    pull.page = page;
+    /* The pull is the list's own; the page does not stretch past its ends. */
+    lv_obj_set_scroll_elastic(page, false);
+    pull.hint = ui_box(page, LV_FLEX_FLOW_ROW, 6);
+    lv_obj_set_width(pull.hint, LV_SIZE_CONTENT);
+    lv_obj_set_floating(pull.hint, true);
+    lv_obj_set_hidden(pull.hint, true);
+    pull.spinner = lv_spinner_create(pull.hint);
+    lv_obj_set_size(pull.spinner, 14, 14);
+    lv_obj_set_style_arc_width(pull.spinner, 2, 0);
+    lv_obj_set_style_arc_width(pull.spinner, 2, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(pull.spinner, lv_color_mix(theme.accent, theme.surface, 51), 0);
+    lv_obj_set_style_arc_color(pull.spinner, theme.accent, LV_PART_INDICATOR);
+    pull.label = ui_text(pull.hint, 12, false, theme.dim);
+    lv_obj_add_event_cb(page, on_scroll, LV_EVENT_SCROLL, NULL);
     ui.list = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
+    pull_reset();
     ui.view = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     lv_obj_t *card = ui_card(ui.view);
     lv_obj_t *head = ui_box(card, LV_FLEX_FLOW_ROW, 8);
@@ -410,6 +568,7 @@ static void hidden(void)
 {
     if (open_id >= 0)
         close_message();
+    pull_reset();
 }
 
 static bool back(void)
@@ -422,5 +581,5 @@ static bool back(void)
 
 const struct page_ops sms_page = {
     .icon = "sms", .zh = "短信", .en = "Messages",
-    .create = create, .shown = shown, .hidden = hidden, .back = back, .top = hidden,
+    .create = create, .shown = shown, .hidden = hidden, .back = back, .top = hidden, .drag = drag,
 };
