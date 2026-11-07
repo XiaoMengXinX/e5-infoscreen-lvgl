@@ -38,6 +38,8 @@
 #define SESSIONS "/tmp/e5-stk"
 /* The boot service that sets the cards' channels apart; see stk_map_channels. */
 #define SIM_SERVICE "/etc/rc.d/S22e5-infoscreen-sim"
+/* Written once it has set them, so it holds until the next boot. */
+#define MAPPED SESSIONS "/mapped"
 #define ITEMS 32
 /* Android's StkApp.UI_TIMEOUT, DISP_TEXT_WAIT_FOR_USER_TIMEOUT and
  * DISP_TEXT_CLEAR_AFTER_DELAY_TIMEOUT. */
@@ -502,9 +504,12 @@ static uint32_t boot_ms(void)
     return (uint32_t)(t.tv_sec * 1000 + t.tv_nsec / 1000000);
 }
 
-/* Until the boot service has run, what the cards send cannot be told apart. */
+/* Until the boot service has run, what the cards send cannot be told apart; a
+ * service enabled before this boot is still on its way. */
 static bool awaiting_restart(void)
 {
+    if (!access(MAPPED, F_OK))
+        return false;
     struct stat st;
     struct timespec now, up;
     clock_gettime(CLOCK_REALTIME, &now);
@@ -1548,6 +1553,10 @@ int stk_map_channels(void)
             bool ready = command_ok(fd, "AT\r", 1000);
             bool mapped = ready && command_ok(fd, "AT+SMMSWAP=0\r", 3000);
             close(fd);
+            if (mapped) {
+                mkdir(SESSIONS, 0700);
+                close(open(MAPPED, O_WRONLY | O_CREAT | O_CLOEXEC, 0600));
+            }
             if (ready) {
                 fprintf(stderr, "dual-SIM channel mapping %s\n", mapped ? "set" : "refused");
                 return mapped ? 0 : 1;
