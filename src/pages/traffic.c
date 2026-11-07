@@ -49,13 +49,7 @@ static void clear_display(void)
 
 static void paint_choices(void)
 {
-    for (int i = 0; i < 3; i++) {
-        bool on = i == slot + 1;
-        lv_obj_set_style_bg_color(ui.choices[i], on ? theme.active : theme.button, 0);
-        lv_obj_set_style_text_color(lv_obj_get_child(ui.choices[i], 0), on ? theme.accent : theme.text, 0);
-    }
-    /* The outline marks that the arrow keys drive the selector. */
-    lv_obj_set_style_outline_width(ui.row, locked ? 2 : 0, 0);
+    ui_choices_paint(ui.row, slot + 1, locked);
 }
 
 static void since_text(const cJSON *u, struct span *day, struct span *month)
@@ -227,16 +221,10 @@ static void create(lv_obj_t *page)
 {
     lv_obj_t *scope = ui_card(page);
     lv_label_set_text(ui_text(scope, 12, false, theme.dim), L("查看流量", "View usage"));
-    lv_obj_t *choices = ui_box(scope, LV_FLEX_FLOW_ROW, 6);
+    lv_obj_t *choices = ui.row = ui_choices(scope);
     const char *labels[3] = {L("跟随数据卡", "Follow data SIM"), "SIM 1", "SIM 2"};
-    for (int i = 0; i < 3; i++) {
-        ui.choices[i] = ui_button(choices, labels[i], on_choice, (void *)(intptr_t)i);
-        lv_obj_set_flex_grow(ui.choices[i], 1);
-        lv_obj_set_style_pad_hor(ui.choices[i], S(4), 0);
-        lv_obj_set_style_text_font(lv_obj_get_child(ui.choices[i], 0), F(12), 0);
-        /* Touch-only until Enter hands the arrow keys to the selector. */
-        lv_group_remove_obj(ui.choices[i]);
-    }
+    for (int i = 0; i < 3; i++)
+        ui.choices[i] = ui_choice(choices, labels[i], on_choice, (void *)(intptr_t)i);
     /* A label too wide for a third of the row (large sizes, English) gets a line
      * of its own above the SIM choices. */
     lv_obj_update_layout(choices);
@@ -247,10 +235,6 @@ static void create(lv_obj_t *page)
         lv_obj_set_flex_grow(ui.choices[0], 0);
         lv_obj_set_width(ui.choices[0], LV_PCT(100));
     }
-    ui.row = choices;
-    lv_obj_set_style_radius(choices, S(11), 0);
-    lv_obj_set_style_outline_color(choices, theme.accent, 0);
-    lv_obj_set_style_outline_pad(choices, S(4), 0);
     ui.state = ui_text(scope, 11, false, theme.dim);
     span_card(page, L("今日", "Today"), &ui.day);
     span_card(page, L("本月", "This month"), &ui.month);

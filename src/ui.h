@@ -24,6 +24,11 @@ lv_obj_t *ui_text(lv_obj_t *parent, int size, bool bold, lv_color_t color);
 lv_obj_t *ui_kv(lv_obj_t *card, const char *label);
 lv_obj_t *ui_button(lv_obj_t *parent, const char *text, lv_event_cb_t cb, void *ctx);
 lv_obj_t *ui_note(lv_obj_t *parent, const char *text);
+/* A row of choices, worked by touch, or by Left and Right once Enter hands the
+ * arrow keys to it; the outline shows they have. */
+lv_obj_t *ui_choices(lv_obj_t *parent);
+lv_obj_t *ui_choice(lv_obj_t *row, const char *text, lv_event_cb_t cb, void *ctx);
+void ui_choices_paint(lv_obj_t *row, int selected, bool keyed);
 lv_obj_t *ui_heading(lv_obj_t *parent, const char *text);
 lv_obj_t *ui_row(lv_obj_t *parent, const char *icon, const char *label, const char *value, unsigned flags,
                  lv_event_cb_t cb, void *ctx);

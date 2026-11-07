@@ -143,6 +143,35 @@ void ui_button_text(lv_obj_t *button, const char *text)
     ui_set_text(lv_obj_get_child(button, 0), text);
 }
 
+lv_obj_t *ui_choices(lv_obj_t *parent)
+{
+    lv_obj_t *row = ui_box(parent, LV_FLEX_FLOW_ROW, 6);
+    lv_obj_set_style_radius(row, S(11), 0);
+    lv_obj_set_style_outline_color(row, theme.accent, 0);
+    lv_obj_set_style_outline_pad(row, S(4), 0);
+    return row;
+}
+
+lv_obj_t *ui_choice(lv_obj_t *row, const char *text, lv_event_cb_t cb, void *ctx)
+{
+    lv_obj_t *button = ui_button(row, text, cb, ctx);
+    lv_obj_set_flex_grow(button, 1);
+    lv_obj_set_style_pad_hor(button, S(4), 0);
+    lv_obj_set_style_text_font(lv_obj_get_child(button, 0), F(12), 0);
+    lv_group_remove_obj(button);
+    return button;
+}
+
+void ui_choices_paint(lv_obj_t *row, int selected, bool keyed)
+{
+    for (int32_t i = 0; i < (int32_t)lv_obj_get_child_count(row); i++) {
+        lv_obj_t *button = lv_obj_get_child(row, i);
+        lv_obj_set_style_bg_color(button, i == selected ? theme.active : theme.button, 0);
+        lv_obj_set_style_text_color(lv_obj_get_child(button, 0), i == selected ? theme.accent : theme.text, 0);
+    }
+    lv_obj_set_style_outline_width(row, keyed ? 2 : 0, 0);
+}
+
 lv_obj_t *ui_note(lv_obj_t *parent, const char *text)
 {
     lv_obj_t *note = ui_text(parent, 10, false, theme.dim);
