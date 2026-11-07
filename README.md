@@ -51,7 +51,7 @@ python3 stage.py <rootfs>
 
 ### 装到已运行的设备
 
-从 Release 下载 zip 并解压，在电脑上运行安装脚本，按提示输入设备的 SSH 地址（如 `root@192.168.9.1`）。电脑上需要有 ssh。
+从 Release 下载 zip 并解压，在电脑上运行安装脚本，按提示输入设备地址（直接回车即为 `192.168.9.1`，以 root 登录）。电脑上需要有 ssh。
 
 ```sh
 ./install.sh                          # macOS、Linux
