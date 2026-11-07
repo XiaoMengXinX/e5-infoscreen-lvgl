@@ -4,6 +4,7 @@
 
 #include "api.h"
 #include "app.h"
+#include "battery.h"
 #include "icons.h"
 #include "theme.h"
 #include "ui.h"
@@ -192,8 +193,15 @@ static void on_usb(lv_event_t *e)
     settings_open_category("usb", "USB", "usb_role");
 }
 
-static void create(lv_obj_t *page)
+static void on_battery(lv_event_t *e)
 {
+    battery_open();
+}
+
+static void create(lv_obj_t *parent)
+{
+    lv_obj_t *page = ui_box(parent, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
+    battery_create(parent, page);
     lv_obj_t *hero = ui_card(page);
     lv_obj_set_style_bg_color(hero, theme.hero_start, 0);
     lv_obj_set_style_bg_grad_color(hero, theme.hero_end, 0);
@@ -277,6 +285,12 @@ static void create(lv_obj_t *page)
     ui.wifi = word_row(page, L("热点", "Hotspot"), &ui.wifi_word);
     ui.clients = row(page, L("在线设备", "Clients"));
     ui.battery = row(page, L("电池", "Battery"));
+    lv_obj_t *battery = lv_obj_get_parent(lv_obj_get_parent(ui.battery));
+    lv_label_set_text_static(ui_text(lv_obj_get_parent(ui.battery), 13, false, theme.dim), "›");
+    lv_obj_set_clickable(battery, true);
+    lv_obj_set_style_bg_color(battery, theme.active, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(battery, on_battery, LV_EVENT_CLICKED, NULL);
+    ui_focusable(battery);
     ui.power = word_row(page, L("电流 / 电压", "Current / voltage"), &ui.power_word);
     lv_obj_t *usage = ui_card(page);
     ui.memory = ui_meter(usage, L("内存", "Memory"));
@@ -462,7 +476,13 @@ static void status(const cJSON *st)
     poll_update(false);
 }
 
+static void hidden(void)
+{
+    battery_close();
+}
+
 const struct page_ops overview_page = {
     .icon = "home", .zh = "概览", .en = "Home",
-    .create = create, .status = status,
+    .create = create, .status = status, .hidden = hidden, .top = hidden, .back = battery_close,
+    .held = battery_is_open, .key = battery_key, .touch = battery_touch,
 };

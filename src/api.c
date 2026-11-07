@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
@@ -122,6 +123,51 @@ static char *http(const char *method, const char *path, const char *body, int *s
     return buf;
 }
 
+/* `ubus call object method args`: its output, the reply's JSON, when it succeeds. */
+static char *ubus(const char *call, const char *args, int *status)
+{
+    *status = 0;
+    char object[64], method[64];
+    if (sscanf(call, "%63s %63s", object, method) != 2)
+        return NULL;
+    int fds[2];
+    if (pipe(fds))
+        return NULL;
+    pid_t pid = fork();
+    if (pid == 0) {
+        dup2(fds[1], 1);
+        close(fds[0]);
+        close(fds[1]);
+        execlp("ubus", "ubus", "-t", "10", "call", object, method, args, (char *)NULL);
+        _exit(127);
+    }
+    close(fds[1]);
+    if (pid < 0) {
+        close(fds[0]);
+        return NULL;
+    }
+    size_t cap = 16384, len = 0;
+    char *buf = malloc(cap);
+    for (;;) {
+        if (cap - len < 4096)
+            buf = realloc(buf, cap *= 2);
+        ssize_t n = read(fds[0], buf + len, cap - len - 1);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            break;
+        len += (size_t)n;
+    }
+    close(fds[0]);
+    buf[len] = 0;
+    int code;
+    while (waitpid(pid, &code, 0) < 0 && errno == EINTR) {
+    }
+    if (WIFEXITED(code) && WEXITSTATUS(code) == 0)
+        *status = 200;
+    return buf;
+}
+
 static void finish(struct request *r)
 {
     pthread_mutex_lock(&q.lock);
@@ -146,7 +192,7 @@ static void *worker(void *unused)
             q.todo_tail = &q.todo;
         pthread_mutex_unlock(&q.lock);
 
-        r->response = http(r->method, r->path, r->body, &r->status);
+        r->response = r->method ? http(r->method, r->path, r->body, &r->status) : ubus(r->path, r->body, &r->status);
         if (r->response && !r->text)
             r->json = cJSON_Parse(r->response);
         finish(r);
@@ -255,6 +301,17 @@ void api_post(const char *path, cJSON *body, api_cb cb, void *ctx)
     *r = (struct request){.method = "POST", .path = strdup(path), .cb = cb, .ctx = ctx,
                           .body = body ? cJSON_PrintUnformatted(body) : strdup("{}")};
     cJSON_Delete(body);
+    submit(r);
+}
+
+void api_ubus(const char *object, const char *method, cJSON *args, api_cb cb, void *ctx)
+{
+    struct request *r = calloc(1, sizeof *r);
+    char call[128];
+    snprintf(call, sizeof call, "%s %s", object, method);
+    *r = (struct request){.path = strdup(call), .cb = cb, .ctx = ctx,
+                          .body = args ? cJSON_PrintUnformatted(args) : strdup("{}")};
+    cJSON_Delete(args);
     submit(r);
 }
 

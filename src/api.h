@@ -19,6 +19,8 @@ bool api_held(void);
 void api_get(const char *path, api_cb cb, void *ctx);
 void api_get_text(const char *path, api_text_cb cb, void *ctx);
 void api_post(const char *path, cJSON *body, api_cb cb, void *ctx);
+/* A ubus call; status is 200 when it succeeds. args is freed. */
+void api_ubus(const char *object, const char *method, cJSON *args, api_cb cb, void *ctx);
 
 /* A page read fails on a transport error, an HTTP error, or an envelope
  * that carries only an error. */
