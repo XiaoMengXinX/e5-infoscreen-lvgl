@@ -454,6 +454,14 @@ static const char *page_label(int page)
 
 /* ---------- bottom navigation ---------- */
 
+static double now_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+
 static void navigate(int page);
 
 static void nav_highlight(int slot)
@@ -462,49 +470,104 @@ static void nav_highlight(int slot)
         lv_obj_set_style_text_color(ui.nav_buttons[i], i == slot ? theme.accent : theme.dim, 0);
 }
 
-static void pill_x(void *obj, int32_t x)
+/* The glass pill rides a spring: a new target mid-flight keeps its speed, a
+ * drag hands it the finger's, it settles with a slight overshoot, and it
+ * stretches along its motion like a drop. It grows while a finger carries it,
+ * and keeps that shape until let go. */
+static struct {
+    /* The pill's centre and speed, px and px/s, and where it is bound. */
+    float x, v, target;
+    /* 0 at rest to 1 while carried, and its speed. */
+    float grow, grow_v;
+    double last;
+    lv_timer_t *timer;
+} pill;
+
+static void pill_render(void)
 {
-    lv_obj_set_x(obj, x);
+    lv_obj_t *b = ui.nav_buttons[0];
+    /* A carried pill keeps its shape; the stretch comes in as it lets go. */
+    float stretch = fminf(fabsf(pill.v) * 0.012f, (float)S(18)) * (1 - pill.grow);
+    int32_t w = lv_obj_get_width(b) + lroundf(pill.grow * S(10) + stretch);
+    int32_t h = lv_obj_get_height(b) + lroundf(pill.grow * S(4) - stretch * 0.3f);
+    lv_obj_set_size(ui.nav_pill, w, h);
+    lv_obj_set_pos(ui.nav_pill, lroundf(pill.x) - w / 2, lv_obj_get_y(b) + (lv_obj_get_height(b) - h) / 2);
 }
 
-static void pill_glide(int32_t x, bool animate, lv_anim_path_cb_t path)
+/* One step of a damped spring: response in seconds, damping 1 for none past the target. */
+static void spring(float *x, float *v, float target, float response, float damping, float dt)
 {
-    lv_anim_delete(ui.nav_pill, pill_x);
-    if (!animate) {
-        lv_obj_set_x(ui.nav_pill, x);
+    float w = 2 * 3.14159265f / response;
+    *v += (-w * w * (*x - target) - 2 * damping * w * *v) * dt;
+    *x += *v * dt;
+}
+
+static void pill_tick(lv_timer_t *t)
+{
+    double now = now_ms();
+    float dt = fminf((float)(now - pill.last) / 1000, 0.05f);
+    pill.last = now;
+    float grown = nav_drag.dragging ? 1 : 0;
+    /* A carried pill chases the finger on a stiff spring, which evens out the
+     * panel's uneven reports and gives the pill a smooth speed to hand on. */
+    float response = nav_drag.dragging ? 0.1f : 0.36f, damping = nav_drag.dragging ? 1 : 0.68f;
+    for (; dt > 0; dt -= 0.004f) {
+        float step = fminf(dt, 0.004f);
+        spring(&pill.x, &pill.v, pill.target, response, damping, step);
+        spring(&pill.grow, &pill.grow_v, grown, 0.3f, 0.8f, step);
+    }
+    if (fabsf(pill.x - pill.target) < 0.5f && fabsf(pill.v) < 10 && fabsf(pill.grow - grown) < 0.003f &&
+        fabsf(pill.grow_v) < 0.02f) {
+        pill.x = pill.target;
+        pill.v = pill.grow_v = 0;
+        pill.grow = grown;
+        lv_timer_pause(pill.timer);
+    }
+    pill_render();
+}
+
+static void pill_wake(void)
+{
+    if (lv_timer_get_paused(pill.timer)) {
+        pill.last = now_ms();
+        lv_timer_resume(pill.timer);
+    }
+}
+
+/* Sends the pill's centre to x; without motion it is there at once. */
+static void pill_aim(float x, bool animate)
+{
+    pill.target = x;
+    if (animate && theme.motion) {
+        pill_wake();
         return;
     }
-    lv_anim_t a;
-    lv_anim_init(&a);
-    lv_anim_set_var(&a, ui.nav_pill);
-    lv_anim_set_exec_cb(&a, pill_x);
-    lv_anim_set_values(&a, lv_obj_get_style_x(ui.nav_pill, 0), x);
-    lv_anim_set_duration(&a, 320);
-    lv_anim_set_path_cb(&a, path);
-    lv_anim_start(&a);
+    lv_timer_pause(pill.timer);
+    pill.x = x;
+    pill.v = pill.grow_v = 0;
+    pill.grow = nav_drag.dragging ? 1 : 0;
+    pill_render();
 }
 
-/* Clear of the bar's padding on the side the pages move towards. */
-static int32_t pill_off(int dir)
+/* The centre clear of the bar's padding on the side the pages move towards. */
+static float pill_off(int dir)
 {
-    return dir < 0 ? -lv_obj_get_style_width(ui.nav_pill, 0) - lv_obj_get_style_pad_left(ui.nav, 0)
-                   : lv_obj_get_width(ui.nav);
+    float half = (float)lv_obj_get_width(ui.nav_buttons[0]) / 2;
+    return dir < 0 ? -half - (float)lv_obj_get_style_pad_left(ui.nav, 0) : (float)lv_obj_get_width(ui.nav) + half;
 }
 
-/* Glides the glass pill under a slot, settling with a slight overshoot. A step
- * brings a waiting pill in moving the way of the step; opening a page directly
- * brings it from the side where it waits. */
+static int32_t slot_center(int slot);
+
+/* Sends the pill under a slot. A step brings a waiting pill in moving the way
+ * of the step; opening a page directly brings it from the side where it waits. */
 static void pill_to(int slot, bool animate)
 {
-    lv_obj_t *b = ui.nav_buttons[slot];
-    lv_obj_set_size(ui.nav_pill, lv_obj_get_width(b), lv_obj_get_height(b));
-    lv_obj_set_y(ui.nav_pill, lv_obj_get_y(b));
     if (pill_side) {
-        lv_anim_delete(ui.nav_pill, pill_x);
-        lv_obj_set_x(ui.nav_pill, pill_off(step_dir ? -step_dir : pill_side));
+        pill.x = pill_off(step_dir ? -step_dir : pill_side);
+        pill.v = 0;
         pill_side = 0;
     }
-    pill_glide(lv_obj_get_x(b), animate, lv_anim_path_overshoot);
+    pill_aim((float)slot_center(slot), animate);
 }
 
 static int32_t slot_center(int slot)
@@ -542,7 +605,7 @@ static void nav_sync(void)
          * takes it out with the old page. */
         if (shown && !pill_side) {
             pill_side = step_dir ? step_dir : -slide_dir;
-            pill_glide(pill_off(pill_side), theme.motion, lv_anim_path_ease_in);
+            pill_aim(pill_off(pill_side), true);
         }
         return;
     }
@@ -567,14 +630,14 @@ static void on_nav(lv_event_t *e)
             if (LV_ABS(x - nav_drag.from) < S(8))
                 return;
             nav_drag.dragging = true;
+            if (lv_obj_is_hidden(ui.nav_pill) || pill_side) {
+                pill.x = (float)x;
+                pill.v = 0;
+            }
             pill_side = 0;
-            lv_anim_delete(ui.nav_pill, pill_x);
             lv_obj_set_hidden(ui.nav_pill, false);
-            lv_obj_t *b = ui.nav_buttons[0];
-            lv_obj_set_size(ui.nav_pill, lv_obj_get_width(b) + S(10), lv_obj_get_height(b) + S(4));
-            lv_obj_set_y(ui.nav_pill, lv_obj_get_y(b) - S(2));
         }
-        lv_obj_set_x(ui.nav_pill, x - (lv_obj_get_width(ui.nav_buttons[0]) + S(10)) / 2);
+        pill_aim((float)x, true);
         nav_highlight(nav_nearest(x));
     } else if (code == LV_EVENT_RELEASED) {
         nav_drag.dragging = false;
@@ -1404,13 +1467,6 @@ static bool swipe_dragging(void)
     return swipe.active && swipe.axis == 'x' && swipe.page == app.page;
 }
 
-static double now_ms(void)
-{
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
-}
-
 static void swipe_sample(double time, int32_t x)
 {
     if (swipe.count == SWIPE_SAMPLES) {
@@ -1988,6 +2044,8 @@ void shell_init(void)
     chord_timer = lv_timer_create(chord_hold, 800, NULL);
     lv_timer_pause(chord_timer);
     power_key.timer = lv_timer_create(power_hold, 1200, NULL);
+    pill.timer = lv_timer_create(pill_tick, 1, NULL);
+    lv_timer_pause(pill.timer);
     lv_timer_pause(power_key.timer);
     build();
     lv_display_add_event_cb(lv_display_get_default(), swipe_frame, LV_EVENT_REFR_START, NULL);
