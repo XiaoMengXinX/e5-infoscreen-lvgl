@@ -74,7 +74,7 @@ static struct {
 
 static struct {
     lv_obj_t *root, *arc, *needle, *readout, *value, *unit, *go;
-    lv_obj_t *down, *up, *ping, *jitter, *sponsor, *place, *isp, *ip;
+    lv_obj_t *down, *up, *ping, *jitter;
     lv_obj_t *cells[2];
     lv_obj_t *marks[SEGMENTS + 1];
 } ui;
@@ -187,7 +187,19 @@ static void paint_result(lv_obj_t *label, double value, const char *fmt)
         ui_set_text(label, "—");
 }
 
-static void fit_info(lv_obj_t *cell);
+/* The info lines' full text: a label cut short with dots holds the dots in its own. */
+static char info_text[2][2][64];
+
+static void fit_info(int cell);
+
+static void set_info(int cell, int line, const char *text)
+{
+    if (!strcmp(info_text[cell][line], text))
+        return;
+    snprintf(info_text[cell][line], sizeof info_text[cell][line], "%s", text);
+    lv_label_set_text(lv_obj_get_child(lv_obj_get_child(ui.cells[cell], 1), line), text);
+    fit_info(cell);
+}
 
 static void paint(void)
 {
@@ -197,12 +209,10 @@ static void paint(void)
     paint_result(ui.up, test.up, "%.1f");
     paint_result(ui.ping, test.ping, "%.0f");
     paint_result(ui.jitter, test.jitter, "%.0f");
-    ui_set_text(ui.sponsor, *test.sponsor ? test.sponsor : L("切换后端", "Switch backend"));
-    ui_set_text(ui.place, *test.place ? test.place : L(backend->zh, backend->en));
-    ui_set_text(ui.isp, *test.isp ? test.isp : L("本机网络", "This network"));
-    ui_set_text(ui.ip, *test.ip ? test.ip : "—");
-    for (int i = 0; i < 2; i++)
-        fit_info(ui.cells[i]);
+    set_info(0, 0, *test.isp ? test.isp : L("本机网络", "This network"));
+    set_info(0, 1, *test.ip ? test.ip : "—");
+    set_info(1, 0, *test.sponsor ? test.sponsor : L("切换后端", "Switch backend"));
+    set_info(1, 1, *test.place ? test.place : L(backend->zh, backend->en));
     /* The backend can be switched only until the first test after the view opens. */
     lv_obj_set_state(ui.cells[1], LV_STATE_DISABLED, test.phase != IDLE);
     paint_gauge();
@@ -533,13 +543,13 @@ static lv_obj_t *info_line(lv_obj_t *parent, int size, bool bold, lv_color_t col
 
 /* A label sized by LVGL measures the text wrapped into words, so the dots would
  * cut the first word short; size it to the unwrapped text instead. */
-static void fit_info(lv_obj_t *cell)
+static void fit_info(int cell)
 {
-    lv_obj_t *icon = lv_obj_get_child(cell, 0), *text = lv_obj_get_child(cell, 1);
-    int32_t room = lv_obj_get_content_width(cell) - lv_obj_get_width(icon) - lv_obj_get_style_pad_column(cell, 0);
-    for (uint32_t i = 0; i < lv_obj_get_child_count(text); i++) {
-        lv_obj_t *label = lv_obj_get_child(text, (int32_t)i);
-        const char *line = lv_label_get_text(label);
+    lv_obj_t *box = ui.cells[cell], *icon = lv_obj_get_child(box, 0), *text = lv_obj_get_child(box, 1);
+    int32_t room = lv_obj_get_content_width(box) - lv_obj_get_width(icon) - lv_obj_get_style_pad_column(box, 0);
+    for (int i = 0; i < 2; i++) {
+        lv_obj_t *label = lv_obj_get_child(text, i);
+        const char *line = info_text[cell][i];
         lv_text_attributes_t attributes = {.letter_space = lv_obj_get_style_text_letter_space(label, 0)};
         int32_t width = lv_text_get_width(line, strlen(line), lv_obj_get_style_text_font(label, 0), &attributes);
         lv_obj_set_width(label, LV_MIN(width, room));
@@ -548,10 +558,13 @@ static void fit_info(lv_obj_t *cell)
 
 static void on_info_size(lv_event_t *e)
 {
-    fit_info(lv_event_get_current_target_obj(e));
+    lv_obj_t *cell = lv_event_get_current_target_obj(e);
+    for (int i = 0; i < 2; i++)
+        if (cell == ui.cells[i])
+            fit_info(i);
 }
 
-static lv_obj_t *info(lv_obj_t *parent, const char *icon, lv_obj_t **title, lv_obj_t **detail)
+static lv_obj_t *info(lv_obj_t *parent, const char *icon)
 {
     lv_obj_t *cell = ui_box(parent, LV_FLEX_FLOW_ROW, 6);
     lv_obj_set_width(cell, 0);
@@ -562,8 +575,8 @@ static lv_obj_t *info(lv_obj_t *parent, const char *icon, lv_obj_t **title, lv_o
     lv_obj_set_style_text_color(icon_create(cell, icon, S(18)), theme.dim, 0);
     lv_obj_t *text = ui_box(cell, LV_FLEX_FLOW_COLUMN, 0);
     lv_obj_set_width(text, LV_SIZE_CONTENT);
-    *title = info_line(text, 11, true, theme.text);
-    *detail = info_line(text, 10, false, theme.dim);
+    info_line(text, 11, true, theme.text);
+    info_line(text, 10, false, theme.dim);
     lv_obj_add_event_cb(cell, on_info_size, LV_EVENT_SIZE_CHANGED, NULL);
     return cell;
 }
@@ -572,6 +585,7 @@ void speedtest_create(lv_obj_t *parent)
 {
     lv_anim_delete(&test, shown_anim);
     memset(&ui, 0, sizeof ui);
+    memset(info_text, 0, sizeof info_text);
     ui.root = ui_box(parent, LV_FLEX_FLOW_COLUMN, 4);
     lv_obj_set_flex_align(ui.root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
@@ -652,8 +666,8 @@ void speedtest_create(lv_obj_t *parent)
 
     lv_obj_t *where = ui_box(ui.root, LV_FLEX_FLOW_ROW, 10);
     lv_obj_set_style_pad_top(where, S(6), 0);
-    ui.cells[0] = info(where, "user", &ui.isp, &ui.ip);
-    lv_obj_t *server = ui.cells[1] = info(where, "globe", &ui.sponsor, &ui.place);
+    ui.cells[0] = info(where, "user");
+    lv_obj_t *server = ui.cells[1] = info(where, "globe");
     /* Centred exactly, the content still looks right of centre in the focus box. */
     lv_obj_set_style_pad_right(server, S(12), 0);
     lv_obj_set_style_bg_color(server, theme.button, LV_STATE_PRESSED);
