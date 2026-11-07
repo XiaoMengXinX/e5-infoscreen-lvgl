@@ -23,7 +23,10 @@ static struct {
 } ui;
 
 static bool locked = true, dark, animating, first_config = true, lock_was_enabled = true;
-static uint32_t wake_at, block_until, key_armed;
+static uint32_t wake_at, key_armed;
+/* A finger still down when the unlock begins, as with the keys, belongs to the
+ * lock until it leaves; one put down after it is the page's. */
+static bool carried_touch;
 static int usage_slot = -1;
 static uint32_t usage_at;
 static bool usage_busy, usage_fresh;
@@ -48,7 +51,9 @@ bool lock_active(void)
 
 bool lock_touch_blocked(void)
 {
-    return !locked && lv_tick_get() < block_until;
+    if (carried_touch && !input_touch_count())
+        carried_touch = false;
+    return !locked && carried_touch;
 }
 
 static int32_t screen_height(void)
@@ -125,9 +130,30 @@ void lock_refresh_usage(void)
         fetch_usage();
 }
 
+/* As in the web screen, the lock fades as it rises, to a quarter while dragged. */
+static lv_opa_t drag_opa(int32_t y)
+{
+    float risen = (float)-y / (float)screen_height();
+    return (lv_opa_t)lroundf(LV_OPA_COVER * fmaxf(0.25f, fminf(1, 1 - risen * 0.85f)));
+}
+
 static void anim_y(void *obj, int32_t v)
 {
     lv_obj_set_style_translate_y(obj, v, 0);
+    lv_obj_set_style_opa(obj, drag_opa(v), 0);
+}
+
+/* The unlock carries the lock from where the finger left it out the top, fading out. */
+static struct {
+    int32_t from, to;
+    lv_opa_t opa;
+} rise;
+
+static void rise_step(void *obj, int32_t v)
+{
+    float t = (float)v / 1024;
+    lv_obj_set_style_translate_y(obj, rise.from + lroundf((float)(rise.to - rise.from) * ui_bezier(t, 0.22f, 0.75f, 0.2f, 1)), 0);
+    lv_obj_set_style_opa(obj, (lv_opa_t)lroundf(rise.opa * (1 - ui_bezier(t, 0.25f, 0.1f, 0.25f, 1))), 0);
 }
 
 static void reset_gesture(void)
@@ -138,7 +164,7 @@ static void reset_gesture(void)
     int32_t current = lv_obj_get_style_translate_y(ui.root, 0);
     lv_anim_delete(ui.root, anim_y);
     if (!current || !theme.motion) {
-        lv_obj_set_style_translate_y(ui.root, 0, 0);
+        anim_y(ui.root, 0);
         return;
     }
     lv_anim_t a;
@@ -156,10 +182,9 @@ static void finish_unlock(void)
     locked = false;
     animating = false;
     gesture.active = false;
-    block_until = lv_tick_get() + 450;
     if (ui.root) {
         lv_obj_set_hidden(ui.root, true);
-        lv_obj_set_style_translate_y(ui.root, 0, 0);
+        anim_y(ui.root, 0);
     }
     idle_reset();
     shell_show(app.page);
@@ -245,23 +270,27 @@ static void unlock(float velocity)
 {
     if (animating)
         return;
-    int32_t h = screen_height();
+    carried_touch = input_touch_count() > 0;
+    /* The web screen's timing: the rest of the way at the finger's speed, within 140–320 ms. */
     int32_t current = lv_obj_get_style_translate_y(ui.root, 0);
-    float remaining = (float)(h + current);
-    /* The ease-out starts at 3 × remaining / duration: begin at the finger's speed. */
-    uint32_t ms = theme.motion ? (uint32_t)fminf(360, fmaxf(160, 3 * remaining / fmaxf(0.8f, velocity))) : 0;
+    float remaining = (float)(screen_height() + current);
+    uint32_t ms = theme.motion ? (uint32_t)fminf(320, fmaxf(140, remaining / fmaxf(1.5f, velocity))) : 0;
     if (!ms) {
         finish_unlock();
         return;
     }
     animating = true;
+    rise.from = current;
+    rise.to = -lv_obj_get_height(ui.root) * 105 / 100;
+    rise.opa = lv_obj_get_style_opa(ui.root, 0);
+    lv_anim_delete(ui.root, anim_y);
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, ui.root);
     lv_anim_set_duration(&a, ms);
-    lv_anim_set_path_cb(&a, ui_ease_out);
-    lv_anim_set_exec_cb(&a, anim_y);
-    lv_anim_set_values(&a, current, -h * 105 / 100);
+    lv_anim_set_path_cb(&a, lv_anim_path_linear);
+    lv_anim_set_exec_cb(&a, rise_step);
+    lv_anim_set_values(&a, 0, 1024);
     lv_anim_set_completed_cb(&a, unlock_done);
     lv_anim_start(&a);
 }
@@ -309,7 +338,7 @@ static void gesture_move(lv_point_t p)
         memmove(gesture.samples, gesture.samples + 1, sizeof gesture.samples[0] * (size_t)(gesture.count - 1));
         gesture.count--;
     }
-    lv_obj_set_style_translate_y(ui.root, gesture.base - distance, 0);
+    anim_y(ui.root, gesture.base - distance);
     idle_reset();
 }
 
@@ -530,7 +559,7 @@ void lock_engage(void)
     if (phone_is_open() && !phone_call_active())
         phone_close();
     gesture.active = false;
-    lv_obj_set_style_translate_y(ui.root, 0, 0);
+    anim_y(ui.root, 0);
     lv_obj_set_hidden(ui.root, false);
     apply_config();
     lock_clock();

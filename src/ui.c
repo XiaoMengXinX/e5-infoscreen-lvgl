@@ -259,6 +259,27 @@ void ui_set_fmt(lv_obj_t *label, const char *fmt, ...)
     ui_set_text(label, text);
 }
 
+float ui_bezier(float t, float x1, float y1, float x2, float y2)
+{
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    float lo = 0, hi = 1, u = t;
+    for (int i = 0; i < 20; i++) {
+        u = (lo + hi) / 2;
+        float x = 3 * (1 - u) * (1 - u) * u * x1 + 3 * (1 - u) * u * u * x2 + u * u * u;
+        if (x < t)
+            lo = u;
+        else
+            hi = u;
+    }
+    return 3 * (1 - u) * (1 - u) * u * y1 + 3 * (1 - u) * u * u * y2 + u * u * u;
+}
+
+int32_t ui_ease_slide(const lv_anim_t *a)
+{
+    float t = a->duration > 0 ? (float)a->act_time / (float)a->duration : 1;
+    return a->start_value + (int32_t)lroundf((float)(a->end_value - a->start_value) * ui_bezier(t, 0.3f, 0, 0, 1));
+}
+
 int32_t ui_ease_out(const lv_anim_t *a)
 {
     float t = a->duration > 0 ? (float)a->act_time / (float)a->duration : 1;
