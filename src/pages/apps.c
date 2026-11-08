@@ -82,11 +82,13 @@ void apps_open_toolkit(void)
     stk_open();
 }
 
-/* Back and leaving the page close the open app, stopping a speed test in progress. */
+/* Back and leaving the page close the open app; back during a speed test only cancels it. */
 static bool back(void)
 {
     if (!lv_obj_is_hidden(list))
         return false;
+    if (!lv_obj_is_hidden(speed) && speedtest_cancel())
+        return true;
     if (lv_obj_is_hidden(toolkit) || !stk_back())
         show(list);
     return true;

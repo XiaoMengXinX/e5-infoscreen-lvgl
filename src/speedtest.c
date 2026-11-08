@@ -548,16 +548,31 @@ void speedtest_reset(void)
     paint();
 }
 
-void speedtest_stop(void)
+static void halt(void)
 {
-    if (test.pid < 0)
-        return;
     kill(test.pid, SIGKILL);
     lv_timer_delete(reader);
     reader = NULL;
     reap();
+}
+
+void speedtest_stop(void)
+{
+    if (test.pid < 0)
+        return;
+    halt();
     test.phase = IDLE;
     paint();
+}
+
+bool speedtest_cancel(void)
+{
+    if (test.pid < 0 || test.phase == INSTALLING)
+        return false;
+    halt();
+    speedtest_reset();
+    toast("%s", L("已取消测速", "Speed test cancelled"));
+    return true;
 }
 
 bool speedtest_running(void)
