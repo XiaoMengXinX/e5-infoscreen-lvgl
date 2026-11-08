@@ -44,30 +44,31 @@ bool theme_apply(const cJSON *screen)
         t.dim = lv_color_hex(0x50647a);
         t.line = lv_color_hex(0xc6d2df);
         t.accent = lv_color_hex(accents[a]);
-        t.good = lv_color_hex(0x1f8a52);
         t.fair = lv_color_hex(0x855900);
         t.poor = lv_color_hex(0xad292f);
         t.hero_start = lv_color_hex(0xdff8ef);
         t.hero_end = lv_color_hex(0xf3f8ff);
     } else {
         static const uint32_t accents[] = {0x85ebcd, 0x89c6ff, 0xc3adff};
+        static const uint32_t actives[] = {0x1c3937, 0x1c3150, 0x2c2850};
         t.bg = lv_color_hex(0x0c121b);
         t.chrome = lv_color_hex(0x0c121b);
         t.surface = lv_color_hex(0x18212e);
         t.button = lv_color_hex(0x233246);
-        t.active = lv_color_hex(0x1c3937);
+        t.active = lv_color_hex(actives[a]);
         t.danger = lv_color_hex(0x5a2420);
         t.nav = lv_color_hex(0x111b28);
         t.text = lv_color_hex(0xf1f5fa);
         t.dim = lv_color_hex(0x96a5b9);
         t.line = lv_color_hex(0x283444);
         t.accent = lv_color_hex(accents[a]);
-        t.good = lv_color_hex(0x3ccf7a);
         t.fair = lv_color_hex(0xf2c14b);
         t.poor = lv_color_hex(0xf0625a);
         t.hero_start = lv_color_hex(0x213b42);
         t.hero_end = lv_color_hex(0x192738);
     }
+    /* As in the web interface, what is good takes the accent. */
+    t.good = t.accent;
 
     bool changed = memcmp(&t, &theme, sizeof t) != 0;
     const char *revisions[2] = {jstr(screen, "desktop_wallpaper_rev"), jstr(screen, "lock_wallpaper_rev")};

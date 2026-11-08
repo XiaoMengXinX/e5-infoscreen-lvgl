@@ -406,8 +406,8 @@ void battery_create(lv_obj_t *parent, lv_obj_t *home)
     lv_obj_set_flex_align(axis, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     ui.start = ui_text(axis, 10, false, theme.dim);
     ui.end = ui_text(axis, 10, false, theme.dim);
-    lv_obj_t *note = ui_note(history, L("绿底为充电或已充满，灰底为接电未充电，橙线为电池放电功率；按住图表查看某一时刻。每分钟记录，保留最近 10 天。",
-                                        "Green: charging or full; grey: plugged in, not charging; orange: the battery's drain. Hold the chart to read a moment. Recorded each minute for 10 days."));
+    lv_obj_t *note = ui_note(history, L("彩色底为充电或已充满，灰底为接电未充电，橙线为电池放电功率；按住图表查看某一时刻。每分钟记录，保留最近 10 天。",
+                                        "Coloured: charging or full; grey: plugged in, not charging; orange: the battery's drain. Hold the chart to read a moment. Recorded each minute for 10 days."));
     lv_obj_set_style_pad_hor(note, 0, 0);
     hist.n = 0;
     paint_tip();
