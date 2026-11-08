@@ -79,7 +79,7 @@ static const struct {
     {"state", "info"}, {"timezone", "globe"}, {"clock_seconds", "clock"}, {"version", "info"}, {"built", "clock"},
     {"screen_version", "info"}, {"update_check", "refresh"}, {"update_apply", "download"},
     {"update_rollback", "refresh"}, {"traffic_clear", "trash"}, {"clear_0", "trash"}, {"clear_1", "trash"},
-    {"clear_all", "trash"}, {"next_boot", "power"}, {"default_boot", "power"}, {"reboot", "refresh"}, {"ui_restart", "restart"}, {"touch_reset", "touch"},
+    {"clear_all", "trash"}, {"next_boot", "power"}, {"default_boot", "power"}, {"reboot", "refresh"}, {"ui_restart", "restart"}, {"ui_webkit", "globe"}, {"touch_reset", "touch"},
     {"poweroff", "power"}, {"android_once", "power"}, {"check", "search"}, {"diagnosis", "info"},
     {"wireless_error", "wifi"}, {"hardware_error", "chip"}, {"controller", "usb"}, {"host_address", "device"},
     {"reset_status", "info"}, {"reset", "refresh"}, {"usb_role_state", "usb"}, {"usb_role", "usb"},
@@ -335,6 +335,8 @@ static char open_item[64];
 
 /* Items the screen handles itself; "local" keeps them away from the API. */
 #define TOUCH_DRIVER "/sys/bus/i2c/drivers/lym10k-touch"
+#define UI_DIR "/usr/libexec/e5-infoscreen"
+#define SWITCH_UI UI_DIR "/switch-ui"
 
 static cJSON *local_item(const char *id, const char *type, const char *zh, const char *en, const char *note_zh,
                          const char *note_en)
@@ -427,6 +429,13 @@ static void add_local_items(cJSON *items, const char *cat)
                                     "只重启信息屏界面，网络不受影响", "The screen only; the network stays up");
         cJSON_AddBoolToObject(restart, "confirm", true);
         cJSON_InsertItemInArray(items, item_index(items, "reboot"), restart);
+        /* Installed with this interface; the web interface's own session is kept beside it. */
+        if (!access(SWITCH_UI, X_OK) && !access(UI_DIR "/session.webkit", F_OK)) {
+            cJSON *web = local_item("ui_webkit", "action", "切换到网页界面", "Switch to the web interface",
+                                    "网页界面的应用里可以切换回来", "Its apps can switch back");
+            cJSON_AddBoolToObject(web, "confirm", true);
+            cJSON_InsertItemInArray(items, item_index(items, "reboot"), web);
+        }
         if (!access(TOUCH_DRIVER, F_OK)) {
             cJSON *touch = local_item("touch_reset", "action", "重置触摸", "Reset touch",
                                       "触摸没有反应时使用；重置后界面会重启",
@@ -501,6 +510,11 @@ static void local_save(const cJSON *it, const cJSON *value)
     if (!strcmp(id, "stk_cache")) {
         stk_clear_cache();
         toast("%s", L("已清除，部分 SIM 卡需要重启设备才能重新读取 STK 菜单", "Cleared; some SIMs need a restart to send their STK menu"));
+        return;
+    }
+    if (!strcmp(id, "ui_webkit")) {
+        toast("%s", L("正在切换到网页界面…", "Switching to the web interface…"));
+        system("setsid " SWITCH_UI " webkit >/dev/null 2>&1 &");
         return;
     }
     if (!strcmp(id, "touch_reset") && !touch_rebind()) {

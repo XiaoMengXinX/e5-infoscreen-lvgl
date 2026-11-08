@@ -3,7 +3,7 @@
 # what it kept, leaving the web interface as it was.
 dir=/usr/libexec/e5-infoscreen
 plugins=/usr/share/e5-infoscreen/www/plugins
-rm -f $dir/ui $dir/session.webkit /tmp/e5-stk.log /tmp/e5-stk.log.old
+rm -f $dir/ui $dir/switch-ui $dir/session.webkit /tmp/e5-stk.log /tmp/e5-stk.log.old
 uci -q delete e5-infoscreen.main.lock_keys
 # The web interface's SIM toolkit and speed test apps share the menus, the
 # sessions, the settings and the fetched speed test.

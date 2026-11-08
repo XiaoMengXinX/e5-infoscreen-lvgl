@@ -1,6 +1,7 @@
 #!/bin/sh
 # Usage: switch-ui.sh lvgl | webkit
-# Run on the device after uploading the binary to /usr/libexec/e5-infoscreen/ui.
+# Run on the device after uploading the binary to /usr/libexec/e5-infoscreen/ui;
+# installed there as switch-ui, which the two interfaces run to switch.
 set -e
 dir=/usr/libexec/e5-infoscreen
 

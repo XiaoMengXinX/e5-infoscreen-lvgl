@@ -30,7 +30,8 @@ rem a key, ssh asks for the password once per step.
 echo Step 1/2: uploading the program to %target%. If ssh asks, enter the device's password.
 ssh "%target%" "cat > /usr/libexec/e5-infoscreen/ui.new" < "%binary%" || goto failed
 echo Step 2/2: installing it and restarting the screen. If ssh asks, enter the password again.
-ssh "%target%" "mv /usr/libexec/e5-infoscreen/ui.new /usr/libexec/e5-infoscreen/ui && sh -s lvgl" < "%here%switch-ui.sh" || goto failed
+rem switch-ui stays on the device for the screens' own switches between interfaces.
+ssh "%target%" "cd /usr/libexec/e5-infoscreen && cat > switch-ui.new && chmod 755 switch-ui.new && mv switch-ui.new switch-ui && mv ui.new ui && ./switch-ui lvgl" < "%here%switch-ui.sh" || goto failed
 echo done: installed on %target%
 set "status=0"
 goto finish

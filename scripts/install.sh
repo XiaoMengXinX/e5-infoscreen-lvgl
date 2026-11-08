@@ -35,5 +35,6 @@ ssh="ssh -o ControlMaster=auto -o ControlPath=$control/ssh -o ControlPersist=60"
 echo "Connecting to $target. If ssh asks, enter the device's password."
 echo "Uploading the program, then installing it and restarting the screen."
 $ssh "$target" "cat > $dir/ui.new" <"$binary"
-$ssh "$target" "mv $dir/ui.new $dir/ui && sh -s lvgl" <"$here/switch-ui.sh"
+# switch-ui stays on the device for the screens' own switches between interfaces.
+$ssh "$target" "cd $dir && cat > switch-ui.new && chmod 755 switch-ui.new && mv switch-ui.new switch-ui && mv ui.new ui && ./switch-ui lvgl" <"$here/switch-ui.sh"
 echo "done: installed on $target"

@@ -67,6 +67,8 @@ install.bat                           # Windows
 ./install.sh root@192.168.1.1         # 直接指定设备
 ```
 
+安装后，在 设置 → 系统 → 切换到网页界面 可以切到网页版；网页版安装 [LVGL 桌面](https://github.com/XiaoMengXinX/infoscreen-plugins/tree/lvgl-switch/plugins/lvgl) 应用后可以切换回来。
+
 卸载会切回网页界面，并删除本程序及其缓存、设置和开机服务；网页版 SIM 卡应用和网速测试插件仍在使用的菜单缓存、设置和测速程序会保留：
 
 ```sh
