@@ -568,7 +568,7 @@ bool speedtest_running(void)
 static void load_backend(void)
 {
     char id[32];
-    screen_option("speedtest_backend", id, sizeof id);
+    shared_option("speedtest_backend", "speedtest", "backend", id, sizeof id);
     for (int i = 0; i < BACKENDS; i++)
         if (!strcmp(id, backends[i].id))
             backend = &backends[i];
@@ -578,7 +578,7 @@ static void on_backend(lv_event_t *e)
 {
     backend = lv_event_get_user_data(e);
     dialog_close();
-    screen_option_set("speedtest_backend", backend->id);
+    shared_option_set("speedtest_backend", "speedtest", "backend", backend->id);
     speedtest_reset();
 }
 

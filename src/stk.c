@@ -1430,7 +1430,7 @@ static void render(void)
     switch (k->view) {
     case V_LOADING:
     case V_WAIT:
-        message(k->view == V_LOADING ? L("正在读取 SIM 卡菜单…", "Reading the SIM menu…")
+        message(k->view == V_LOADING ? L("正在读取 STK 菜单…", "Reading the SIM menu…")
                                      : L("正在等待 SIM 卡…", "Waiting for the SIM…"));
         break;
     case V_EMPTY:
@@ -1598,7 +1598,7 @@ void stk_create(lv_obj_t *parent)
     }
     ui.body = ui_box(ui.root, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     char option[4];
-    screen_option("stk", option, sizeof option);
+    shared_option("stk", "stk", "enabled", option, sizeof option);
     enabled = strcmp(option, "0") != 0;
     if (enabled && !awaiting_restart())
         listen();
@@ -1617,7 +1617,7 @@ void stk_set_enabled(bool on)
     if (on == enabled)
         return;
     enabled = on;
-    screen_option_set("stk", on ? "1" : "0");
+    shared_option_set("stk", "stk", "enabled", on ? "1" : "0");
     if (on) {
         if (!awaiting_restart())
             listen();

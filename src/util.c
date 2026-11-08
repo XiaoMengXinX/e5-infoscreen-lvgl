@@ -362,3 +362,23 @@ void screen_option_set(const char *name, const char *value)
     snprintf(command, sizeof command, "uci set e5-infoscreen.main.%s=%s && uci commit e5-infoscreen", name, value);
     system(command);
 }
+
+void shared_option(const char *name, const char *plugin, const char *setting, char *out, size_t size)
+{
+    char option[96];
+    snprintf(option, sizeof option, "e5-plugin-%s.settings.%s", plugin, setting);
+    uci_get(option, out, size);
+    if (!*out)
+        screen_option(name, out, size);
+}
+
+void shared_option_set(const char *name, const char *plugin, const char *setting, const char *value)
+{
+    char command[256];
+    screen_option_set(name, value);
+    snprintf(command, sizeof command,
+             "[ -e /etc/config/e5-plugin-%s ] && uci set e5-plugin-%s.settings=settings && "
+             "uci set e5-plugin-%s.settings.%s=%s && uci commit e5-plugin-%s",
+             plugin, plugin, plugin, setting, value, plugin);
+    system(command);
+}

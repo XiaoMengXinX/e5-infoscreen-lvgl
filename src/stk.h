@@ -9,7 +9,7 @@ struct key_event;
 /* Sets the modem's dual-SIM channel mapping, for the boot service; 0 when set. */
 int stk_map_channels(void);
 void stk_create(lv_obj_t *parent);
-/* The toolkit's setting (UCI e5-infoscreen.main.stk, on unless "0"). */
+/* The toolkit's setting (UCI e5-plugin-stk.settings.enabled, else e5-infoscreen.main.stk; on unless "0"). */
 bool stk_enabled(void);
 void stk_set_enabled(bool on);
 void stk_clear_cache(void);
