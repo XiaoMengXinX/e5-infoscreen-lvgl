@@ -1,6 +1,6 @@
-/* Screen recording: frames are copied off the display at up to 30 per second and a
- * worker thread compresses them to JPEG in a QuickTime movie, the format QuickTime
- * and ffmpeg-based players both open without extra codecs. */
+/* Screen recording: frames are copied off the display as it flips, up to its 60 per
+ * second, and a worker thread compresses them to JPEG in a QuickTime movie, the format
+ * QuickTime and ffmpeg-based players both open without extra codecs. */
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +15,7 @@
 
 #define RECORD_PATH "/tmp/record.mov"
 #define SLOTS 4
-#define FRAME_MS 33
+#define FRAME_MS 16
 #define LIMIT_MS 60000
 
 struct frame {
