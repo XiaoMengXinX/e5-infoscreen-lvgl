@@ -25,9 +25,12 @@ static struct {
     int fd;
     uint32_t crtc, connector;
     struct drm_mode_modeinfo mode;
-    struct buffer buffers[2];
+    struct buffer buffers[3];
     uint8_t *render[2];
+    const uint8_t *shown;
+    uint32_t shown_pitch;
     int front;
+    bool pending;
     uint32_t frames;
 } drm = {.fd = -1};
 
@@ -125,15 +128,25 @@ static void wait_flip(void)
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
 {
     if (lv_display_flush_is_last(display)) {
-        int back = pixels == drm.render[0] ? 0 : 1;
+        /* Of the three buffers, this one is neither on screen nor on its way there. */
+        int back = (drm.front + 1) % 3;
         memcpy(drm.buffers[back].map, pixels, (size_t)drm.buffers[back].pitch * drm.mode.vdisplay);
+        /* Handing the new frame over as the last one lands keeps every frame one panel
+         * period behind, whatever the drawing took. */
+        if (drm.pending) {
+            wait_flip();
+            drm.pending = false;
+        }
         struct drm_mode_crtc_page_flip flip = {
             .crtc_id = drm.crtc, .fb_id = drm.buffers[back].fb, .flags = DRM_MODE_PAGE_FLIP_EVENT,
         };
-        if (io(DRM_IOCTL_MODE_PAGE_FLIP, &flip) == 0)
-            wait_flip();
-        drm.front = back;
-        drm.frames++;
+        if (io(DRM_IOCTL_MODE_PAGE_FLIP, &flip) == 0) {
+            drm.shown = pixels;
+            drm.shown_pitch = drm.buffers[back].pitch;
+            drm.front = back;
+            drm.pending = true;
+            drm.frames++;
+        }
     }
     lv_display_flush_ready(display);
 }
@@ -142,7 +155,7 @@ lv_display_t *drm_display_create(const char *path)
 {
     drm.fd = open(path, O_RDWR | O_CLOEXEC);
     if (drm.fd < 0 || io(DRM_IOCTL_SET_MASTER, NULL) < 0 || !find_output() || !create_buffer(&drm.buffers[0]) ||
-        !create_buffer(&drm.buffers[1])) {
+        !create_buffer(&drm.buffers[1]) || !create_buffer(&drm.buffers[2])) {
         perror(path);
         return NULL;
     }
@@ -161,7 +174,7 @@ lv_display_t *drm_display_create(const char *path)
     for (int i = 0; i < 2; i++) {
         drm.render[i] = malloc(bytes);
         if (!drm.render[i]) {
-            fputs("malloc", stderr);
+            perror("malloc");
             return NULL;
         }
         memset(drm.render[i], 0, bytes);
@@ -176,8 +189,8 @@ lv_display_t *drm_display_create(const char *path)
 
 const uint8_t *drm_display_front(uint32_t *pitch)
 {
-    *pitch = drm.buffers[drm.front].pitch;
-    return drm.buffers[drm.front].map;
+    *pitch = drm.shown_pitch;
+    return drm.shown;
 }
 
 uint32_t drm_display_frames(void)
