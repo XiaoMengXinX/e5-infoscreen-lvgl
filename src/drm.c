@@ -26,6 +26,7 @@ static struct {
     uint32_t crtc, connector;
     struct drm_mode_modeinfo mode;
     struct buffer buffers[2];
+    uint8_t *render[2];
     int front;
     uint32_t frames;
 } drm = {.fd = -1};
@@ -124,7 +125,8 @@ static void wait_flip(void)
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
 {
     if (lv_display_flush_is_last(display)) {
-        int back = pixels == drm.buffers[0].map ? 0 : 1;
+        int back = pixels == drm.render[0] ? 0 : 1;
+        memcpy(drm.buffers[back].map, pixels, (size_t)drm.buffers[back].pitch * drm.mode.vdisplay);
         struct drm_mode_crtc_page_flip flip = {
             .crtc_id = drm.crtc, .fb_id = drm.buffers[back].fb, .flags = DRM_MODE_PAGE_FLIP_EVENT,
         };
@@ -153,10 +155,21 @@ lv_display_t *drm_display_create(const char *path)
         perror("SETCRTC");
         return NULL;
     }
+    /* Frames are drawn in ordinary memory: the display's buffers are write-combined,
+     * and every pixel of a translucent card would cost an uncached read there. */
+    size_t bytes = (size_t)drm.buffers[0].pitch * drm.mode.vdisplay;
+    for (int i = 0; i < 2; i++) {
+        drm.render[i] = malloc(bytes);
+        if (!drm.render[i]) {
+            fputs("malloc", stderr);
+            return NULL;
+        }
+        memset(drm.render[i], 0, bytes);
+    }
     lv_display_t *display = lv_display_create(drm.mode.hdisplay, drm.mode.vdisplay);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_XRGB8888);
-    lv_display_set_buffers_with_stride(display, drm.buffers[1].map, drm.buffers[0].map, (uint32_t)drm.buffers[0].size,
-                                       drm.buffers[0].pitch, LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_buffers_with_stride(display, drm.render[1], drm.render[0], (uint32_t)bytes, drm.buffers[0].pitch,
+                                       LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(display, flush);
     return display;
 }
