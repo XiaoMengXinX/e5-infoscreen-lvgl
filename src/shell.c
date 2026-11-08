@@ -4,8 +4,6 @@
 #include <string.h>
 #include <time.h>
 
-#include "src/misc/cache/instance/lv_image_cache.h"
-
 #include "api.h"
 #include "drm.h"
 #include "app.h"
@@ -16,6 +14,7 @@
 #include "theme.h"
 #include "ui.h"
 #include "util.h"
+#include "wallpaper.h"
 
 #define POLL_AWAKE_MS 2000
 #define POLL_BLANK_MS 5000
@@ -36,7 +35,7 @@ static const struct page_ops *const page_ops[PAGE_COUNT] = {
 static const int nav_defaults[5] = {PAGE_OVERVIEW, PAGE_SIGNAL, PAGE_TRAFFIC, PAGE_SMS, PAGE_SETTINGS};
 
 static struct {
-    lv_obj_t *root, *wallpaper, *content, *menu;
+    lv_obj_t *root, *wallpaper, *bar_wallpaper, *content, *menu;
     lv_obj_t *bar, *bar_sim, *bar_op, *bar_tech, *bar_notes, *bar_sms, *bar_bars, *bar_dual[2], *bar_bat, *bar_pct, *bar_clock, *bar_rec;
     lv_obj_t *toolbar, *back_icon, *title, *spinner;
     lv_obj_t *nav, *nav_pill, *nav_buttons[5];
@@ -1627,6 +1626,8 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
 
 bool shell_sliding(void)
 {
+    if (lock_moving() || lv_obj_is_scrolling(ui.pages[app.page]))
+        return true;
     if (swipe_dragging())
         return swipe_speed(now_ms()) != 0;
     /* A late frame in a slide's last stretch does not show. */
@@ -1938,14 +1939,23 @@ static void build(void)
     lv_obj_set_flex_flow(ui.root, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_scrollable(ui.root, false);
     lv_obj_set_style_text_color(ui.root, theme.text, 0);
-    if (theme.desktop_wallpaper) {
-        static const char path[] = "A:/etc/e5-infoscreen/wallpapers/desktop.png";
-        lv_image_cache_drop(path);
+    wallpaper_reset();
+    const lv_draw_buf_t *wallpaper = wallpaper_get(WALLPAPER_DESKTOP);
+    if (wallpaper) {
         ui.wallpaper = lv_image_create(ui.root);
-        lv_image_set_src(ui.wallpaper, path);
+        lv_image_set_src(ui.wallpaper, wallpaper);
         lv_obj_set_floating(ui.wallpaper, true);
-        lv_obj_set_size(ui.wallpaper, LV_PCT(100), LV_PCT(100));
-        lv_image_set_inner_align(ui.wallpaper, LV_IMAGE_ALIGN_COVER);
+    }
+    /* The lock screen's wallpaper behind the status bar while it is up; the page
+     * keeps the desktop one, so it shows as the lock slides away. */
+    const lv_draw_buf_t *lock = wallpaper && theme.status_bar ? wallpaper_get(WALLPAPER_LOCK) : NULL;
+    if (lock) {
+        ui.bar_wallpaper = lv_image_create(ui.root);
+        lv_image_set_src(ui.bar_wallpaper, lock);
+        lv_obj_set_size(ui.bar_wallpaper, LV_PCT(100), STATUS_H);
+        lv_image_set_inner_align(ui.bar_wallpaper, LV_IMAGE_ALIGN_TOP_LEFT);
+        lv_obj_set_floating(ui.bar_wallpaper, true);
+        lv_obj_set_hidden(ui.bar_wallpaper, true);
     }
 
     ui.group = lv_group_create();
@@ -1989,8 +1999,19 @@ static void build(void)
     theme.scale = scale;
     build_overlays();
     lock_create();
+    shell_wallpaper_locked(lock_active());
     phone_init();
     shell_title();
+}
+
+void shell_wallpaper_locked(bool locked)
+{
+    if (ui.bar_wallpaper)
+        lv_obj_set_hidden(ui.bar_wallpaper, !locked);
+    /* Without a lock wallpaper the bar goes solid while locked, as the web screen's does. */
+    bool solid = locked && theme.desktop_wallpaper && !ui.bar_wallpaper;
+    lv_obj_set_style_bg_color(ui.bar, solid ? theme.bg : theme.chrome, 0);
+    lv_obj_set_style_bg_opa(ui.bar, theme.desktop_wallpaper && !solid ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
 }
 
 void shell_rebuild(void)

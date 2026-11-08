@@ -26,6 +26,7 @@
 
 #define LV_CACHE_DEF_SIZE (4 * 1024 * 1024)
 
+#define LV_USE_SNAPSHOT 1
 #define LV_USE_FS_STDIO 1
 #define LV_FS_STDIO_LETTER 'A'
 #define LV_USE_LODEPNG 1

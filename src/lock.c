@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "src/misc/cache/instance/lv_image_cache.h"
-
 #include "api.h"
 #include "app.h"
 #include "icons.h"
@@ -13,6 +11,7 @@
 #include "theme.h"
 #include "ui.h"
 #include "util.h"
+#include "wallpaper.h"
 
 #define SAMPLES 32
 
@@ -136,10 +135,69 @@ static lv_opa_t drag_opa(int32_t y)
     return (lv_opa_t)lroundf(LV_OPA_COVER * fmaxf(0.25f, fminf(1, 1 - risen * 0.85f)));
 }
 
+/* While the lock moves, it and the page under it show as pictures taken as it
+ * leaves its place, which cost a copy a frame rather than drawing both. The lock
+ * itself stays, unseen, for the touch. */
+static struct {
+    lv_draw_buf_t *page_pixels, *lock_pixels;
+    lv_obj_t *page, *lock;
+} still;
+
+static void still_end(void)
+{
+    if (!still.lock)
+        return;
+    lv_obj_delete(still.page);
+    lv_obj_delete(still.lock);
+    lv_draw_buf_destroy(still.page_pixels);
+    lv_draw_buf_destroy(still.lock_pixels);
+    still = (typeof(still)){0};
+    lv_obj_set_hidden(shell_root(), false);
+}
+
+static void still_begin(void)
+{
+    still.page_pixels = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_XRGB8888);
+    still.lock_pixels = lv_snapshot_take(ui.root, LV_COLOR_FORMAT_XRGB8888);
+    if (!still.page_pixels || !still.lock_pixels) {
+        lv_draw_buf_destroy(still.page_pixels);
+        lv_draw_buf_destroy(still.lock_pixels);
+        still = (typeof(still)){0};
+        return;
+    }
+    still.page = lv_image_create(lv_layer_top());
+    lv_image_set_src(still.page, still.page_pixels);
+    lv_obj_move_to_index(still.page, 0);
+    still.lock = lv_image_create(lv_obj_get_parent(ui.root));
+    lv_image_set_src(still.lock, still.lock_pixels);
+    lv_obj_set_hidden(shell_root(), true);
+}
+
+static void place(int32_t y, lv_opa_t opa)
+{
+    bool rest = !y && opa == LV_OPA_COVER;
+    if (rest)
+        still_end();
+    else if (!still.lock)
+        still_begin();
+    lv_obj_set_style_translate_y(ui.root, y, 0);
+    if (still.lock) {
+        lv_obj_set_style_opa(ui.root, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_translate_y(still.lock, y, 0);
+        lv_obj_set_style_image_opa(still.lock, opa, 0);
+    } else {
+        lv_obj_set_style_opa(ui.root, opa, 0);
+    }
+}
+
 static void anim_y(void *obj, int32_t v)
 {
-    lv_obj_set_style_translate_y(obj, v, 0);
-    lv_obj_set_style_opa(obj, drag_opa(v), 0);
+    place(v, drag_opa(v));
+}
+
+bool lock_moving(void)
+{
+    return still.lock != NULL;
 }
 
 static struct {
@@ -150,8 +208,8 @@ static struct {
 static void rise_step(void *obj, int32_t v)
 {
     float t = (float)v / 1024;
-    lv_obj_set_style_translate_y(obj, rise.from + lroundf((float)(rise.to - rise.from) * ui_bezier(t, 0.22f, 0.75f, 0.2f, 1)), 0);
-    lv_obj_set_style_opa(obj, (lv_opa_t)lroundf(rise.opa * (1 - ui_bezier(t, 0.25f, 0.1f, 0.25f, 1))), 0);
+    place(rise.from + lroundf((float)(rise.to - rise.from) * ui_bezier(t, 0.22f, 0.75f, 0.2f, 1)),
+          (lv_opa_t)lroundf(rise.opa * (1 - ui_bezier(t, 0.25f, 0.1f, 0.25f, 1))));
 }
 
 static void reset_gesture(void)
@@ -180,6 +238,7 @@ static void finish_unlock(void)
     locked = false;
     animating = false;
     gesture.active = false;
+    shell_wallpaper_locked(false);
     if (ui.root) {
         lv_obj_set_hidden(ui.root, true);
         anim_y(ui.root, 0);
@@ -280,7 +339,7 @@ static void unlock(float velocity)
     animating = true;
     rise.from = current;
     rise.to = -lv_obj_get_height(ui.root) * 105 / 100;
-    rise.opa = lv_obj_get_style_opa(ui.root, 0);
+    rise.opa = drag_opa(current);
     lv_anim_delete(ui.root, anim_y);
     lv_anim_t a;
     lv_anim_init(&a);
@@ -452,6 +511,12 @@ void lock_create(void)
     char keys[4];
     screen_option("lock_keys", keys, sizeof keys);
     keys_on = strcmp(keys, "0") != 0;
+    /* A rebuild has taken the pictures' objects away with the layer. */
+    if (still.lock) {
+        lv_draw_buf_destroy(still.page_pixels);
+        lv_draw_buf_destroy(still.lock_pixels);
+        still = (typeof(still)){0};
+    }
     /* The standard size, so the lock always fits the panel. */
     float scale = theme_cap(1);
     int32_t height = screen_height() - shell_status_bar_height();
@@ -480,15 +545,13 @@ void lock_create(void)
     lv_obj_set_clickable(ui.root, true);
     lv_obj_set_press_lock(ui.root, true);
     lv_obj_add_event_cb(ui.root, on_touch, LV_EVENT_ALL, NULL);
-    if (theme.lock_wallpaper) {
-        static const char path[] = "A:/etc/e5-infoscreen/wallpapers/lock.png";
-        lv_image_cache_drop(path);
+    const lv_draw_buf_t *pixels = wallpaper_get(WALLPAPER_LOCK);
+    if (pixels) {
+        /* Placed as on the whole screen, it goes on behind the status bar (shell_wallpaper_locked). */
         lv_obj_t *wallpaper = lv_image_create(ui.root);
-        lv_image_set_src(wallpaper, path);
+        lv_image_set_src(wallpaper, pixels);
         lv_obj_set_floating(wallpaper, true);
-        lv_obj_set_size(wallpaper, lv_display_get_horizontal_resolution(lv_display_get_default()), height);
-        lv_obj_align(wallpaper, LV_ALIGN_TOP_LEFT, -S(18), -S(28));
-        lv_image_set_inner_align(wallpaper, LV_IMAGE_ALIGN_COVER);
+        lv_obj_align(wallpaper, LV_ALIGN_TOP_LEFT, -S(18), -S(28) - shell_status_bar_height());
     }
 
     lv_obj_set_style_text_color(icon_create(ui.root, "lock", S(22)), theme.accent, 0);
@@ -548,6 +611,7 @@ void lock_engage(void)
     lv_anim_delete(ui.root, NULL);
     animating = false;
     locked = true;
+    shell_wallpaper_locked(true);
     wake_at = lv_tick_get();
     key_armed = 0;
     hold_reset();

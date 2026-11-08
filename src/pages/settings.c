@@ -800,8 +800,7 @@ static void render_cat(struct view *v)
         const char *type = jstr_or(it, "type", "");
         const char *id = jstr_or(it, "id", "");
         /* Web-only items. */
-        if (!strcmp(id, "ui_opacity") || !strcmp(id, "donate") ||
-            !strcmp(id, "disclaimer"))
+        if (!strcmp(id, "donate") || !strcmp(id, "disclaimer"))
             continue;
         char key[96], label[256], value[512];
         snprintf(key, sizeof key, "item:%s", id);
