@@ -35,7 +35,7 @@ static const struct page_ops *const page_ops[PAGE_COUNT] = {
 static const int nav_defaults[5] = {PAGE_OVERVIEW, PAGE_SIGNAL, PAGE_TRAFFIC, PAGE_SMS, PAGE_SETTINGS};
 
 static struct {
-    lv_obj_t *root, *wallpaper, *bar_wallpaper, *content, *menu;
+    lv_obj_t *root, *bar_wallpaper, *content, *menu;
     lv_obj_t *bar, *bar_sim, *bar_op, *bar_tech, *bar_notes, *bar_sms, *bar_bars, *bar_dual[2], *bar_bat, *bar_pct, *bar_clock, *bar_rec;
     lv_obj_t *toolbar, *back_icon, *title, *spinner;
     lv_obj_t *nav, *nav_pill, *nav_buttons[5];
@@ -1711,8 +1711,6 @@ static void build_bar(void)
     ui.bar = lv_obj_create(ui.root);
     lv_obj_remove_style_all(ui.bar);
     lv_obj_set_size(ui.bar, LV_PCT(100), STATUS_H);
-    lv_obj_set_style_bg_color(ui.bar, theme.chrome, 0);
-    lv_obj_set_style_bg_opa(ui.bar, theme.desktop_wallpaper ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     lv_obj_set_style_pad_hor(ui.bar, 12, 0);
     lv_obj_set_flex_flow(ui.bar, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(ui.bar, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
@@ -1942,20 +1940,19 @@ static void build(void)
     wallpaper_reset();
     const lv_draw_buf_t *wallpaper = wallpaper_get(WALLPAPER_DESKTOP);
     if (wallpaper) {
-        ui.wallpaper = lv_image_create(ui.root);
-        lv_image_set_src(ui.wallpaper, wallpaper);
-        lv_obj_set_floating(ui.wallpaper, true);
+        lv_obj_t *image = lv_image_create(ui.root);
+        lv_image_set_src(image, wallpaper);
+        lv_obj_set_floating(image, true);
     }
     /* The lock screen's wallpaper behind the status bar while it is up; the page
      * keeps the desktop one, so it shows as the lock slides away. */
-    const lv_draw_buf_t *lock = wallpaper && theme.status_bar ? wallpaper_get(WALLPAPER_LOCK) : NULL;
+    const lv_draw_buf_t *lock = theme.status_bar ? wallpaper_get(WALLPAPER_LOCK) : NULL;
     if (lock) {
         ui.bar_wallpaper = lv_image_create(ui.root);
         lv_image_set_src(ui.bar_wallpaper, lock);
         lv_obj_set_size(ui.bar_wallpaper, LV_PCT(100), STATUS_H);
         lv_image_set_inner_align(ui.bar_wallpaper, LV_IMAGE_ALIGN_TOP_LEFT);
         lv_obj_set_floating(ui.bar_wallpaper, true);
-        lv_obj_set_hidden(ui.bar_wallpaper, true);
     }
 
     ui.group = lv_group_create();
@@ -2008,10 +2005,12 @@ void shell_wallpaper_locked(bool locked)
 {
     if (ui.bar_wallpaper)
         lv_obj_set_hidden(ui.bar_wallpaper, !locked);
-    /* Without a lock wallpaper the bar goes solid while locked, as the web screen's does. */
+    /* Clear over the lock's wallpaper while it is up, or the desktop's otherwise;
+     * solid, as the web screen's is, when the lock has none. */
+    bool behind = locked ? ui.bar_wallpaper != NULL : theme.desktop_wallpaper;
     bool solid = locked && theme.desktop_wallpaper && !ui.bar_wallpaper;
     lv_obj_set_style_bg_color(ui.bar, solid ? theme.bg : theme.chrome, 0);
-    lv_obj_set_style_bg_opa(ui.bar, theme.desktop_wallpaper && !solid ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(ui.bar, behind ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
 }
 
 void shell_rebuild(void)
