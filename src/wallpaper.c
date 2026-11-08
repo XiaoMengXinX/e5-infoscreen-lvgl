@@ -45,7 +45,7 @@ static lv_draw_buf_t *load(enum wallpaper which)
     if (src && (src->header.cf == LV_COLOR_FORMAT_ARGB8888 || src->header.cf == LV_COLOR_FORMAT_XRGB8888))
         out = lv_draw_buf_create(w, h, LV_COLOR_FORMAT_XRGB8888, LV_STRIDE_AUTO);
     if (out) {
-        /* Covering the screen, centred; a wallpaper is normally the screen's size. */
+        /* Covering the screen, centred. */
         int32_t sw = src->header.w, sh = src->header.h;
         float scale = (float)sw / w < (float)sh / h ? (float)sw / w : (float)sh / h;
         float x0 = (sw - w * scale) / 2, y0 = (sh - h * scale) / 2;

@@ -136,12 +136,19 @@ static lv_opa_t drag_opa(int32_t y)
 }
 
 /* While the lock moves, it and the page under it show as pictures taken as it
- * leaves its place, which cost a copy a frame rather than drawing both. The lock
- * itself stays, unseen, for the touch. */
+ * leaves its place, so a frame is one image blit. The lock itself stays, unseen,
+ * for the touch. */
 static struct {
     lv_draw_buf_t *page_pixels, *lock_pixels;
     lv_obj_t *page, *lock;
 } still;
+
+static void still_free(void)
+{
+    lv_draw_buf_destroy(still.page_pixels);
+    lv_draw_buf_destroy(still.lock_pixels);
+    still = (typeof(still)){0};
+}
 
 static void still_end(void)
 {
@@ -149,9 +156,7 @@ static void still_end(void)
         return;
     lv_obj_delete(still.page);
     lv_obj_delete(still.lock);
-    lv_draw_buf_destroy(still.page_pixels);
-    lv_draw_buf_destroy(still.lock_pixels);
-    still = (typeof(still)){0};
+    still_free();
     lv_obj_set_hidden(shell_root(), false);
 }
 
@@ -160,9 +165,7 @@ static void still_begin(void)
     still.page_pixels = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_XRGB8888);
     still.lock_pixels = lv_snapshot_take(ui.root, LV_COLOR_FORMAT_XRGB8888);
     if (!still.page_pixels || !still.lock_pixels) {
-        lv_draw_buf_destroy(still.page_pixels);
-        lv_draw_buf_destroy(still.lock_pixels);
-        still = (typeof(still)){0};
+        still_free();
         return;
     }
     still.page = lv_image_create(lv_layer_top());
@@ -512,11 +515,8 @@ void lock_create(void)
     screen_option("lock_keys", keys, sizeof keys);
     keys_on = strcmp(keys, "0") != 0;
     /* A rebuild has taken the pictures' objects away with the layer. */
-    if (still.lock) {
-        lv_draw_buf_destroy(still.page_pixels);
-        lv_draw_buf_destroy(still.lock_pixels);
-        still = (typeof(still)){0};
-    }
+    if (still.lock)
+        still_free();
     /* The standard size, so the lock always fits the panel. */
     float scale = theme_cap(1);
     int32_t height = screen_height() - shell_status_bar_height();
