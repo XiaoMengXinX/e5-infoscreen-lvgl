@@ -174,7 +174,7 @@ void fmt_amount(double bytes, char *out, size_t size)
     snprintf(out, size, "%s %s", num, units[unit]);
 }
 
-void fmt_speed(double bytes_per_s, bool bytes_mode, char *num, char *unit, size_t size)
+void fmt_speed(double bytes_per_s, bool bytes_mode, int decimals, char *num, char *unit, size_t size)
 {
     static const char *const bits[] = {"bps", "Kbps", "Mbps", "Gbps", "Tbps"};
     static const char *const bytes[] = {"B/s", "KB/s", "MB/s", "GB/s", "TB/s"};
@@ -186,7 +186,8 @@ void fmt_speed(double bytes_per_s, bool bytes_mode, char *num, char *unit, size_
     }
     double value = (bytes_per_s > 0 ? bytes_per_s : 0) * (bytes_mode ? 1 : 8);
     int i = scaled(&value, bytes_mode ? 1024 : 1000, 5);
-    fmt_trim(value, 2, num, size);
+    int most = value >= 999.95 ? 0 : value >= 99.995 ? 1 : 2;
+    fmt_trim(value, decimals < most ? decimals : most, num, size);
     snprintf(unit, size, "%s", units[i]);
 }
 

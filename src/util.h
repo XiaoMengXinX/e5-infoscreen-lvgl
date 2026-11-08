@@ -23,7 +23,8 @@ void label_text(const cJSON *label, char *out, size_t size);
 void fmt_trim(double value, int decimals, char *out, size_t size);
 void fmt_bytes(double bytes, char *out, size_t size);
 void fmt_amount(double bytes, char *out, size_t size);
-void fmt_speed(double bytes_per_s, bool bytes_mode, char *num, char *unit, size_t size);
+/* At most four digits, and no more decimals than asked for. */
+void fmt_speed(double bytes_per_s, bool bytes_mode, int decimals, char *num, char *unit, size_t size);
 void fmt_duration(double seconds, char *out, size_t size);
 void fmt_temp(const cJSON *value, char *out, size_t size);
 const char *tech_name(const char *tech);

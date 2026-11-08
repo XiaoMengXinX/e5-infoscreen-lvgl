@@ -595,7 +595,7 @@ void lock_status(const cJSON *st)
     for (int i = 0; i < 2; i++) {
         char num[24], unit[24];
         double rate;
-        fmt_speed(jnum(st, rates[i], &rate) ? rate : NAN, bytes, num, unit, sizeof num);
+        fmt_speed(jnum(st, rates[i], &rate) ? rate : NAN, bytes, 2, num, unit, sizeof num);
         ui_set_text(targets[i][0], num);
         ui_set_text(targets[i][1], unit);
     }

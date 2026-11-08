@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "src/misc/lv_text_private.h"
+
 #include "api.h"
 #include "app.h"
 #include "battery.h"
@@ -368,17 +370,29 @@ static void render_usb(const cJSON *st)
     }
 }
 
+/* As many decimals as the column has room for at the display size. */
+static void set_rate(lv_obj_t *big, lv_obj_t *unit, double rate, bool bytes)
+{
+    char num[24], u[24];
+    int32_t room = lv_obj_get_content_width(lv_obj_get_parent(lv_obj_get_parent(big))) - lv_obj_get_x(big);
+    const lv_font_t *font = lv_obj_get_style_text_font(big, 0);
+    lv_text_attributes_t attributes = {.letter_space = lv_obj_get_style_text_letter_space(big, 0)};
+    for (int decimals = 2;; decimals--) {
+        fmt_speed(rate, bytes, decimals, num, u, sizeof num);
+        if (!decimals || room <= 0 || lv_text_get_width(num, strlen(num), font, &attributes) <= room)
+            break;
+    }
+    ui_set_text(big, num);
+    ui_set_text(unit, u);
+}
+
 static void status(const cJSON *st)
 {
     char a[48], b[48], text[256];
     bool bytes = jstr_is(st, "screen.speed_unit", "bytes");
     double v;
-    fmt_speed(jnum(st, "traffic.rx_rate", &v) ? v : NAN, bytes, a, b, sizeof a);
-    ui_set_text(ui.rx, a);
-    ui_set_text(ui.rx_unit, b);
-    fmt_speed(jnum(st, "traffic.tx_rate", &v) ? v : NAN, bytes, a, b, sizeof a);
-    ui_set_text(ui.tx, a);
-    ui_set_text(ui.tx_unit, b);
+    set_rate(ui.rx, ui.rx_unit, jnum(st, "traffic.rx_rate", &v) ? v : NAN, bytes);
+    set_rate(ui.tx, ui.tx_unit, jnum(st, "traffic.tx_rate", &v) ? v : NAN, bytes);
     fmt_bytes(jnum_or(st, "traffic.rx_total", 0), a, sizeof a);
     fmt_bytes(jnum_or(st, "traffic.tx_total", 0), b, sizeof b);
     ui_set_fmt(ui.total, "↓ %s  ↑ %s", a, b);
