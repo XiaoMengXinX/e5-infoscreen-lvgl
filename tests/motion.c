@@ -55,8 +55,6 @@ int main(void)
             previous = value;
         }
         assert(previous == a.end_value);
-        a.duration = 0;
-        assert(ui_ease_release(&a) == a.end_value);
     }
     for (int d = 0; d < 3; d++) {
         float damping = (float[]){.68f, .8f, 1}[d];

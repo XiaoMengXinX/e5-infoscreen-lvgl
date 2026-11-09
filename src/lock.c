@@ -364,24 +364,27 @@ static void unlock(float velocity)
     if (animating)
         return;
     carried_touch = input_touch_count() > 0;
-    int32_t current = lv_obj_get_style_translate_y(ui.root, 0);
-    float remaining = (float)(screen_height() + current);
-    int32_t target = -lv_obj_get_height(ui.root) * 105 / 100;
-    float distance = (float)LV_ABS(target - current);
-    uint32_t ms = theme.motion ? (uint32_t)fminf(320, fmaxf(140, remaining / fmaxf(1.5f, velocity))) : 0;
-    if (theme.motion && velocity > 0 && distance > 0) {
-        long duration = lroundf(3 * distance / velocity);
-        ms = (uint32_t)LV_CLAMP(1, duration, 320);
-    }
-    if (!ms) {
+    if (!theme.motion) {
         finish_unlock();
         return;
+    }
+    int32_t current = lv_obj_get_style_translate_y(ui.root, 0);
+    int32_t target = -lv_obj_get_height(ui.root) * 105 / 100;
+    float distance = (float)LV_ABS(target - current);
+    uint32_t ms;
+    if (velocity > 0 && distance > 0) {
+        long duration = lroundf(3 * distance / velocity);
+        ms = (uint32_t)LV_CLAMP(1, duration, 320);
+        rise.tangent = fminf(3, velocity * ms / distance);
+    } else {
+        float remaining = (float)(screen_height() + current);
+        ms = (uint32_t)fminf(320, fmaxf(140, remaining / fmaxf(1.5f, velocity)));
+        rise.tangent = 3;
     }
     animating = true;
     rise.from = current;
     rise.to = target;
     rise.opa = drag_opa(current);
-    rise.tangent = velocity > 0 && distance > 0 ? fminf(3, velocity * ms / distance) : 3;
     lv_anim_delete(ui.root, anim_y);
     lv_anim_t a;
     lv_anim_init(&a);

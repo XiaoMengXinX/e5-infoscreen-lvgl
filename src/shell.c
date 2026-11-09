@@ -1511,7 +1511,6 @@ static void swipe_place(double now)
         slide_x(ui.pages[peer], swipe.at + (swipe.at < 0 ? w : -w));
 }
 
-/* Places the pages as each frame starts, and asks for another while the finger moves. */
 static void motion_frame(lv_event_t *e)
 {
     if (pill.moving) {

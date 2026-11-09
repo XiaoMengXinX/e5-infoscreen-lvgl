@@ -319,13 +319,12 @@ float ui_bezier(float t, float x1, float y1, float x2, float y2)
 
 float ui_release_progress(float t, float slope)
 {
-    t = LV_CLAMP(0, t, 1);
     return t * (slope + t * (3 - 2 * slope + t * (slope - 2)));
 }
 
 int32_t ui_ease_release(const lv_anim_t *a)
 {
-    float t = a->duration ? (float)a->act_time / a->duration : 1;
+    float t = (float)a->act_time / a->duration;
     float slope = *(const float *)a->user_data;
     return a->start_value + (int32_t)lroundf((a->end_value - a->start_value) * ui_release_progress(t, slope));
 }
