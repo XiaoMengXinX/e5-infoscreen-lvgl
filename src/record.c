@@ -1,5 +1,5 @@
-/* Screen recording: frames are copied off the display as it flips, up to its 60 per
- * second, and a worker thread compresses them to JPEG in a QuickTime movie, the format
+/* Screen recording: frames are copied as the display updates, and a worker thread
+ * compresses them to JPEG in a QuickTime movie, the format
  * QuickTime and ffmpeg-based players both open without extra codecs. */
 #include <pthread.h>
 #include <stdio.h>
@@ -15,7 +15,6 @@
 
 #define RECORD_PATH "/tmp/record.mov"
 #define SLOTS 4
-#define FRAME_MS 16
 #define LIMIT_MS 60000
 
 struct frame {
@@ -307,7 +306,8 @@ static void start(void)
     started = lv_tick_get();
     /* The screen without the prompt is the first frame. */
     captured = drm_display_frames();
-    timer = lv_timer_create(tick, FRAME_MS, NULL);
+    uint32_t period = (uint32_t)drm_display_period();
+    timer = lv_timer_create(tick, LV_MAX(1, period), NULL);
     shell_record_indicator(0);
 }
 

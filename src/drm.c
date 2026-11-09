@@ -5,7 +5,6 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <fcntl.h>
-#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -30,16 +29,25 @@ static struct {
     const uint8_t *shown;
     uint32_t shown_pitch;
     int front;
+    int ready;
+    const uint8_t *ready_pixels;
     bool pending;
+    bool slow;
+    uint32_t draw_at;
+    uint32_t deadline;
+    uint64_t serial;
+    double period_ms;
     uint32_t frames;
-} drm = {.fd = -1};
+} drm = {.fd = -1, .ready = -1};
+
+static void present_ready(void);
 
 static int io(unsigned long request, void *arg)
 {
     int r;
     do
         r = ioctl(drm.fd, request, arg);
-    while (r < 0 && (errno == EINTR || errno == EAGAIN));
+    while (r < 0 && errno == EINTR);
     return r;
 }
 
@@ -116,44 +124,122 @@ static bool create_buffer(struct buffer *b)
     return true;
 }
 
-static void wait_flip(void)
+int drm_display_fd(void)
 {
-    struct pollfd p = {.fd = drm.fd, .events = POLLIN};
-    char events[256];
-    if (poll(&p, 1, 100) > 0)
-        while (read(drm.fd, events, sizeof events) < 0 && errno == EINTR) {
+    return drm.fd;
+}
+
+bool drm_display_can_draw(void)
+{
+    if (drm.pending && (int32_t)(drm.deadline - lv_tick_get()) <= 0) {
+        drm_display_dispatch();
+        if (drm.pending && (int32_t)(drm.deadline - lv_tick_get()) <= 0) {
+            fputs("DRM page flip completion timed out\n", stderr);
+            drm.pending = false;
+            present_ready();
         }
+    }
+    /* Rendering that exceeds a panel period can overlap the outstanding flip. */
+    return !drm.pending || (drm.slow && drm.ready < 0);
+}
+
+int drm_display_wait(void)
+{
+    if (!drm.pending)
+        return -1;
+    int32_t left = (int32_t)(drm.deadline - lv_tick_get());
+    return LV_MAX(0, left);
+}
+
+void drm_display_dispatch(void)
+{
+    uint8_t events[256];
+    ssize_t n;
+    for (;;) {
+        n = read(drm.fd, events, sizeof events);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            break;
+        for (size_t at = 0; at + sizeof(struct drm_event) <= (size_t)n;) {
+            struct drm_event *event = (void *)(events + at);
+            if (event->length < sizeof *event || event->length > (size_t)n - at)
+                break;
+            if (event->type == DRM_EVENT_FLIP_COMPLETE && event->length >= sizeof(struct drm_event_vblank)) {
+                struct drm_event_vblank *flip = (void *)event;
+                if (flip->user_data == drm.serial)
+                    drm.pending = false;
+            }
+            at += event->length;
+        }
+    }
+    present_ready();
+}
+
+double drm_display_period(void)
+{
+    return drm.period_ms;
+}
+
+static double mode_period(const struct drm_mode_modeinfo *mode)
+{
+    if (!mode->clock || !mode->htotal || !mode->vtotal)
+        return 1000.0 / (mode->vrefresh ? mode->vrefresh : 60);
+    double period = (double)mode->htotal * mode->vtotal / mode->clock;
+    if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+        period /= 2;
+    if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
+        period *= 2;
+    if (mode->vscan > 1)
+        period *= mode->vscan;
+    return period;
+}
+
+static void frame_start(lv_event_t *e)
+{
+    drm.draw_at = lv_tick_get();
+}
+
+static void present_ready(void)
+{
+    if (drm.ready < 0 || drm.pending)
+        return;
+    int back = drm.ready;
+    struct drm_mode_crtc_page_flip flip = {
+        .crtc_id = drm.crtc, .fb_id = drm.buffers[back].fb, .flags = DRM_MODE_PAGE_FLIP_EVENT,
+        .user_data = drm.serial + 1,
+    };
+    if (io(DRM_IOCTL_MODE_PAGE_FLIP, &flip) == 0) {
+        drm.shown = drm.ready_pixels;
+        drm.shown_pitch = drm.buffers[back].pitch;
+        drm.front = back;
+        drm.pending = true;
+        drm.deadline = lv_tick_get() + 100;
+        drm.serial++;
+        drm.frames++;
+    }
+    drm.ready = -1;
 }
 
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
 {
     if (lv_display_flush_is_last(display)) {
+        if (drm.pending)
+            drm_display_dispatch();
         /* Of the three buffers, this one is neither on screen nor on its way there. */
         int back = (drm.front + 1) % 3;
         memcpy(drm.buffers[back].map, pixels, (size_t)drm.buffers[back].pitch * drm.mode.vdisplay);
-        /* Handing the new frame over as the last one lands keeps every frame one panel
-         * period behind, whatever the drawing took. */
-        if (drm.pending) {
-            wait_flip();
-            drm.pending = false;
-        }
-        struct drm_mode_crtc_page_flip flip = {
-            .crtc_id = drm.crtc, .fb_id = drm.buffers[back].fb, .flags = DRM_MODE_PAGE_FLIP_EVENT,
-        };
-        if (io(DRM_IOCTL_MODE_PAGE_FLIP, &flip) == 0) {
-            drm.shown = pixels;
-            drm.shown_pitch = drm.buffers[back].pitch;
-            drm.front = back;
-            drm.pending = true;
-            drm.frames++;
-        }
+        drm.ready = back;
+        drm.ready_pixels = pixels;
+        drm.slow = lv_tick_elaps(drm.draw_at) >= drm.period_ms;
+        present_ready();
     }
     lv_display_flush_ready(display);
 }
 
 lv_display_t *drm_display_create(const char *path)
 {
-    drm.fd = open(path, O_RDWR | O_CLOEXEC);
+    drm.fd = open(path, O_RDWR | O_NONBLOCK | O_CLOEXEC);
     if (drm.fd < 0 || io(DRM_IOCTL_SET_MASTER, NULL) < 0 || !find_output() || !create_buffer(&drm.buffers[0]) ||
         !create_buffer(&drm.buffers[1]) || !create_buffer(&drm.buffers[2])) {
         perror(path);
@@ -184,6 +270,8 @@ lv_display_t *drm_display_create(const char *path)
     lv_display_set_buffers_with_stride(display, drm.render[1], drm.render[0], (uint32_t)bytes, drm.buffers[0].pitch,
                                        LV_DISPLAY_RENDER_MODE_FULL);
     lv_display_set_flush_cb(display, flush);
+    drm.period_ms = mode_period(&drm.mode);
+    lv_display_add_event_cb(display, frame_start, LV_EVENT_REFR_START, NULL);
     return display;
 }
 

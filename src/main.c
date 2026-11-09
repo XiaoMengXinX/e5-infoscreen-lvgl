@@ -40,19 +40,27 @@ int main(int argc, char **argv)
     input_init(display);
     shell_init();
 
-    struct pollfd fds[INPUT_MAX_DEVICES + 1];
+    struct pollfd fds[INPUT_MAX_DEVICES + 2];
     for (;;) {
-        uint32_t wait = lv_timer_handler();
+        uint32_t wait = drm_display_can_draw() ? lv_timer_handler() : LV_NO_TIMER_READY;
+        int timeout = wait == LV_NO_TIMER_READY ? -1 : (int)wait;
+        int flip_wait = drm_display_wait();
+        if (flip_wait >= 0 && (timeout < 0 || flip_wait < timeout))
+            timeout = flip_wait;
         int n = input_poll_fds(fds);
         fds[n] = (struct pollfd){.fd = api_fd(), .events = POLLIN};
-        int ready = poll(fds, (nfds_t)n + 1, wait == LV_NO_TIMER_READY ? -1 : (int)wait);
+        fds[n + 1] = (struct pollfd){.fd = drm_display_fd(), .events = POLLIN};
+        int ready = poll(fds, (nfds_t)n + 2, timeout);
         if (dump_requested) {
             dump_requested = 0;
             drm_display_save("/tmp/screen.png");
         }
-        if (ready > 0)
+        if (ready > 0) {
             input_dispatch(fds, n);
-        if (fds[n].revents & POLLIN)
-            api_dispatch();
+            if (fds[n].revents & POLLIN)
+                api_dispatch();
+            if (fds[n + 1].revents & POLLIN)
+                drm_display_dispatch();
+        }
     }
 }
