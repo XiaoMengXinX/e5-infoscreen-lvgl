@@ -26,8 +26,8 @@ bool theme_apply(const cJSON *screen)
     const char *desktop = jstr(screen, "desktop_wallpaper"), *lock = jstr(screen, "lock_wallpaper");
     t.desktop_wallpaper = desktop && !strcmp(desktop, "custom");
     t.lock_wallpaper = lock && !strcmp(lock, "custom");
-    /* The cards' opacity over a wallpaper, in percent, as the web screen has it. */
-    double percent = LV_CLAMP(0, jnum_or(screen, "ui_opacity", 70), 100);
+    double percent = jnum_or(screen, "ui_opacity", 70);
+    percent = LV_CLAMP(0, percent, 100);
     t.surface_opa = t.desktop_wallpaper ? (lv_opa_t)(percent * 255 / 100 + 0.5) : LV_OPA_COVER;
 
     const char *accent = jstr(screen, "ui_accent");
@@ -69,7 +69,6 @@ bool theme_apply(const cJSON *screen)
         t.hero_start = lv_color_hex(0x213b42);
         t.hero_end = lv_color_hex(0x192738);
     }
-    /* As in the web interface, what is good takes the accent. */
     t.good = t.accent;
 
     bool changed = memcmp(&t, &theme, sizeof t) != 0;
