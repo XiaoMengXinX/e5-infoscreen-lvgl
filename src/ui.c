@@ -27,6 +27,13 @@ lv_obj_t *ui_box(lv_obj_t *parent, lv_flex_flow_t flow, int gap)
     return box;
 }
 
+/* A page that fits still scrolls and bounces: its content counts as a pixel taller than it is. */
+static void page_self_size(lv_event_t *e)
+{
+    lv_point_t *size = lv_event_get_param(e);
+    size->y = lv_obj_get_content_height(lv_event_get_target_obj(e)) + 1;
+}
+
 lv_obj_t *ui_page(lv_obj_t *parent)
 {
     lv_obj_t *page = lv_obj_create(parent);
@@ -40,6 +47,7 @@ lv_obj_t *ui_page(lv_obj_t *parent)
     lv_obj_set_scroll_dir(page, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(page, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_momentum(page, true);
+    lv_obj_add_event_cb(page, page_self_size, LV_EVENT_GET_SELF_SIZE, NULL);
     return page;
 }
 

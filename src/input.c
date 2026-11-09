@@ -44,6 +44,20 @@ static struct {
 static lv_indev_t *touch_indev, *keypad_indev;
 static int32_t width, height;
 
+/* A touch that stops a coasting list, or moves further than a tap does, is not a click. */
+#define TAP_SLOP 12
+
+static struct {
+    bool cancelled;
+    lv_point_t point;
+} press;
+
+static void touch_click(lv_event_t *e)
+{
+    if (press.cancelled)
+        lv_indev_stop_processing(touch_indev);
+}
+
 static struct {
     uint32_t key[8];
     lv_indev_state_t state[8];
@@ -254,6 +268,8 @@ void input_init(lv_display_t *display)
     lv_indev_set_type(touch_indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(touch_indev, touch_read);
     lv_indev_set_mode(touch_indev, LV_INDEV_MODE_EVENT);
+    lv_indev_add_event_cb(touch_indev, touch_click, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_indev_add_event_cb(touch_indev, touch_click, LV_EVENT_CLICKED, NULL);
 
     keypad_indev = lv_indev_create();
     lv_indev_set_type(keypad_indev, LV_INDEV_TYPE_KEYPAD);
@@ -305,8 +321,14 @@ static void touch_sync(const struct device *d)
         touch.point = (lv_point_t){scale(touch.x[slot], &d->x, width), scale(touch.y[slot], &d->y, height)};
     bool was_pressed = touch.pressed;
     touch.pressed = pressed;
-    if (pressed && !was_pressed)
+    if (pressed && !was_pressed) {
+        press.cancelled = touch_indev && lv_indev_get_scroll_obj(touch_indev);
+        press.point = touch.point;
         shell_touch_press();
+    }
+    if (pressed && !press.cancelled)
+        press.cancelled = LV_ABS(touch.point.x - press.point.x) > TAP_SLOP ||
+                          LV_ABS(touch.point.y - press.point.y) > TAP_SLOP;
     shell_swipe(pressed, touch.point, touch.time);
     lv_indev_read(touch_indev);
 }
