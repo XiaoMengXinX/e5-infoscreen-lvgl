@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run rendering and motion regressions using the screen's build environment."""
+"""Run regressions using the screen's build environment."""
 import runpy
 import shlex
 import subprocess
@@ -12,13 +12,19 @@ if not (ROOT / 'out/build/liblvgl.a').is_file():
 lvgl = '/out/deps/' + build['SOURCES']['lvgl'][3]
 cjson = '/out/deps/' + build['SOURCES']['cjson'][3]
 flags = ['cc', '-O2', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
-         '-DLV_CONF_INCLUDE_SIMPLE', '-I/src', '-I/src/src', '-I' + lvgl, '-I' + cjson,
+         '-DLV_CONF_INCLUDE_SIMPLE', '-I/out/gen', '-I/src', '-I/src/src', '-I' + lvgl, '-I' + cjson,
          '-I/usr/include/libdrm', '-ffunction-sections', '-fdata-sections']
 commands = ['mkdir -p /out/tests']
-for name, sources in [('drm', ['/src/tests/drm.c']), ('motion', ['/src/tests/motion.c', '/src/src/ui.c'])]:
+for name, sources in [('drm', ['/src/tests/drm.c']), ('motion', ['/src/tests/motion.c', '/src/src/ui.c']),
+                      ('lpac', ['/src/tests/lpac.c']), ('esim_text', ['/src/tests/esim_text.c']),
+                      ('esim_flow', ['/src/tests/esim_flow.c', '/src/src/ui.c', '/src/src/dialog.c']),
+                      ('install', ['/src/tests/install.c', '/src/src/ui.c', '/src/src/dialog.c'])]:
     command = flags + sources
     if name == 'motion':
         command += ['/out/build/liblvgl.a']
+    elif name in ('lpac', 'esim_text', 'esim_flow', 'install'):
+        command += ['/src/src/util.c', '/out/build/libcjson.a', '/out/build/liblvgl.a',
+                    '-lfreetype', '-lbz2', '-lpng16', '-lz', '-lbrotlidec', '-lbrotlicommon']
     command += ['-Wl,--gc-sections', '-static', '-lm', '-lpthread', '-o', '/out/tests/' + name]
     commands += [shlex.join(command), '/out/tests/' + name]
 subprocess.run(['docker', 'run', '--rm', '--platform', 'linux/arm64',
