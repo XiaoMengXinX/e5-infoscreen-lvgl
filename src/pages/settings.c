@@ -79,7 +79,7 @@ static const struct {
     {"state", "info"}, {"timezone", "globe"}, {"clock_seconds", "clock"}, {"version", "info"}, {"built", "clock"},
     {"screen_version", "info"}, {"update_check", "refresh"}, {"update_apply", "download"},
     {"update_rollback", "refresh"}, {"traffic_clear", "trash"}, {"clear_0", "trash"}, {"clear_1", "trash"},
-    {"clear_all", "trash"}, {"next_boot", "power"}, {"default_boot", "power"}, {"reboot", "refresh"}, {"ui_restart", "restart"}, {"ui_webkit", "globe"}, {"touch_reset", "touch"},
+    {"clear_all", "trash"}, {"next_boot", "power"}, {"default_boot", "power"}, {"reboot", "refresh"}, {"ui_restart", "refresh"}, {"ui_webkit", "globe"}, {"touch_reset", "touch"},
     {"poweroff", "power"}, {"android_once", "power"}, {"check", "search"}, {"diagnosis", "info"},
     {"wireless_error", "wifi"}, {"hardware_error", "chip"}, {"controller", "usb"}, {"host_address", "device"},
     {"reset_status", "info"}, {"reset", "refresh"}, {"usb_role_state", "usb"}, {"usb_role", "usb"},
