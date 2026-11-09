@@ -171,7 +171,7 @@ void power_menu_open(void)
     lv_obj_center(sheet);
     lv_obj_set_clickable(sheet, true);
     lv_obj_set_style_bg_color(sheet, theme.bg, 0);
-    lv_obj_set_style_bg_opa(sheet, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(sheet, theme.surface_opa, 0);
     lv_obj_set_style_border_color(sheet, theme.line, 0);
     lv_obj_set_style_border_width(sheet, 1, 0);
     lv_obj_set_style_radius(sheet, S(24), 0);

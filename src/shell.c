@@ -1165,6 +1165,7 @@ void picture_open(const char *src, const char *caption)
     char path[256];
     snprintf(path, sizeof path, "A:/usr/share/e5-infoscreen/www%s%s", src[0] == '/' ? "" : "/", src);
     lv_obj_clean(ui.picture);
+    wallpaper_background(ui.picture);
     lv_obj_t *image = lv_image_create(ui.picture);
     lv_image_set_src(image, path);
     lv_obj_set_style_radius(image, S(10), 0);
@@ -1626,7 +1627,6 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
     }
 }
 
-
 /* ---------- construction ---------- */
 
 static void on_back(lv_event_t *e)
@@ -1820,6 +1820,7 @@ static void build_menu(void)
     lv_obj_set_style_bg_color(ui.menu, theme.bg, 0);
     lv_obj_set_style_bg_opa(ui.menu, LV_OPA_COVER, 0);
     lv_obj_set_style_pad_all(ui.menu, 14, 0);
+    wallpaper_background(ui.menu);
     /* Three rows of large cells outgrow the screen at the bigger sizes. */
     lv_obj_set_scrollable(ui.menu, true);
     lv_obj_set_scroll_dir(ui.menu, LV_DIR_VER);
@@ -1846,7 +1847,7 @@ static void build_overlays(void)
     lv_obj_t *sys = lv_layer_sys();
     ui.toast = ui_text(sys, 13, false, theme.text);
     lv_obj_set_style_bg_color(ui.toast, theme.button, 0);
-    lv_obj_set_style_bg_opa(ui.toast, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(ui.toast, theme.surface_opa, 0);
     lv_obj_set_style_radius(ui.toast, 18, 0);
     lv_obj_set_style_pad_ver(ui.toast, 8, 0);
     lv_obj_set_style_pad_hor(ui.toast, 14, 0);
@@ -1862,7 +1863,7 @@ static void build_overlays(void)
     lv_obj_set_width(ui.osd, LV_PCT(92));
     lv_obj_align(ui.osd, LV_ALIGN_TOP_MID, 0, (theme.status_bar ? STATUS_H : 0) + TOOLBAR_H + 8);
     lv_obj_set_style_bg_color(ui.osd, theme.surface, 0);
-    lv_obj_set_style_bg_opa(ui.osd, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(ui.osd, theme.surface_opa, 0);
     lv_obj_set_style_radius(ui.osd, 14, 0);
     lv_obj_set_style_pad_all(ui.osd, 12, 0);
     ui.osd_label = ui_text(ui.osd, 13, false, theme.text);
@@ -1883,7 +1884,7 @@ static void build_overlays(void)
     lv_obj_set_width(ui.notice, LV_PCT(95));
     lv_obj_align(ui.notice, LV_ALIGN_TOP_MID, 0, (theme.status_bar ? STATUS_H : 0) + 12);
     lv_obj_set_style_bg_color(ui.notice, theme.surface, 0);
-    lv_obj_set_style_bg_opa(ui.notice, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(ui.notice, theme.surface_opa, 0);
     lv_obj_set_style_border_color(ui.notice, theme.accent, 0);
     lv_obj_set_style_border_width(ui.notice, 1, 0);
     lv_obj_set_style_radius(ui.notice, 12, 0);

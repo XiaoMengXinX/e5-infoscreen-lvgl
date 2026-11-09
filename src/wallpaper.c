@@ -82,6 +82,23 @@ const lv_draw_buf_t *wallpaper_get(enum wallpaper which)
     return bufs[which];
 }
 
+void wallpaper_background(lv_obj_t *obj)
+{
+    const lv_draw_buf_t *pixels = wallpaper_get(WALLPAPER_DESKTOP);
+    if (!pixels)
+        return;
+    lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
+    lv_obj_update_layout(obj);
+    lv_area_t content;
+    lv_obj_get_content_coords(obj, &content);
+    lv_obj_t *image = lv_image_create(obj);
+    lv_image_set_src(image, pixels);
+    lv_obj_set_floating(image, true);
+    /* Keep the wallpaper aligned to the panel across views with different padding. */
+    lv_obj_set_pos(image, -content.x1, -content.y1);
+    lv_obj_move_background(image);
+}
+
 void wallpaper_reset(void)
 {
     for (int i = 0; i < 2; i++) {

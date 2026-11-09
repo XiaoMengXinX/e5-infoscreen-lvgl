@@ -11,6 +11,7 @@
 #include "input.h"
 #include "theme.h"
 #include "ui.h"
+#include "wallpaper.h"
 #include "util.h"
 
 #define TONES 32
@@ -578,7 +579,7 @@ static lv_obj_t *sheet(const char *title)
     lv_obj_set_clickable(panel, true);
     lv_obj_align(panel, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_color(panel, theme.bg, 0);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(panel, theme.surface_opa, 0);
     lv_obj_set_style_radius(panel, S(20), 0);
     lv_obj_set_style_pad_all(panel, S(16), 0);
     lv_label_set_text(ui_text(panel, 16, true, theme.text), title);
@@ -963,6 +964,7 @@ static void mount(bool fullscreen)
     lv_obj_set_style_pad_hor(ui.root, S(16), 0);
     lv_obj_set_style_pad_ver(ui.root, full ? S(28) : S(8), 0);
     lv_obj_set_scrollable(ui.root, false);
+    wallpaper_background(ui.root);
     ui.body = ui_box(ui.root, LV_FLEX_FLOW_COLUMN, 8);
     lv_obj_set_height(ui.body, LV_PCT(100));
     lv_obj_set_flex_align(ui.body, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

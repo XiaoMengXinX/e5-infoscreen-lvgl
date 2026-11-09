@@ -138,7 +138,7 @@ static void open(lv_obj_t *ta)
     lv_color_t special = theme.light ? lv_color_hex(0xaab0bb) : lv_color_hex(0x2e3136);
     lv_color_t ink = theme.light ? lv_color_hex(0x111111) : lv_color_white();
     lv_obj_set_style_bg_color(keyboard, base, 0);
-    lv_obj_set_style_bg_opa(keyboard, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(keyboard, theme.surface_opa, 0);
     lv_obj_set_style_pad_all(keyboard, S(5), 0);
     lv_obj_set_style_pad_row(keyboard, S(7), 0);
     lv_obj_set_style_pad_column(keyboard, S(5), 0);

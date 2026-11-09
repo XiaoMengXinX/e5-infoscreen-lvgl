@@ -1476,7 +1476,7 @@ static void render(void)
         lv_obj_set_style_text_font(ui.field, F(14), 0);
         lv_obj_set_style_text_color(ui.field, theme.text, 0);
         lv_obj_set_style_bg_color(ui.field, theme.surface, 0);
-        lv_obj_set_style_bg_opa(ui.field, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_opa(ui.field, theme.surface_opa, 0);
         lv_obj_set_style_border_color(ui.field, theme.line, 0);
         lv_obj_set_style_border_color(ui.field, theme.accent, LV_STATE_FOCUSED);
         lv_obj_set_style_border_width(ui.field, 1, 0);

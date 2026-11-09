@@ -1270,7 +1270,7 @@ static void field(const char *name, const char *label, int max, bool password, c
     lv_obj_set_style_text_font(ta, F(14), 0);
     lv_obj_set_style_text_color(ta, theme.text, 0);
     lv_obj_set_style_bg_color(ta, theme.surface, 0);
-    lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_opa(ta, theme.surface_opa, 0);
     lv_obj_set_style_border_color(ta, theme.line, 0);
     lv_obj_set_style_border_color(ta, theme.accent, LV_STATE_FOCUSED);
     lv_obj_set_style_border_width(ta, 1, 0);
