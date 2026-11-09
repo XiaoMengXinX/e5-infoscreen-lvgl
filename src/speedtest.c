@@ -17,6 +17,7 @@
 
 #include "app.h"
 #include "icons.h"
+#include "install.h"
 #include "theme.h"
 #include "ui.h"
 #include "util.h"
@@ -58,9 +59,9 @@ static const char global_install[] =
  * others usable. apk writes its progress as "done/total" lines. */
 static const char speedtest_install[] =
     "echo @update\n"
-    "apk update --progress-fd 3 3>&1 >/dev/null 2>&1\n"
+    "apk --timeout 15 update --progress-fd 3 3>&1 >/dev/null 2>&1\n"
     "echo @add\n"
-    "exec apk add --progress-fd 3 speedtest-go 3>&1 >/dev/null 2>&1\n";
+    "exec apk --timeout 30 add --progress-fd 3 speedtest-go 3>&1 >/dev/null 2>&1\n";
 
 struct backend {
     const char *id, *zh, *en;
@@ -82,7 +83,7 @@ static const double marks[] = {0, 5, 10, 50, 100, 250, 500, 1000};
 #define SEGMENTS ((int)(sizeof marks / sizeof *marks) - 1)
 #define SWEEP 270
 
-enum phase { IDLE, INSTALLING, CONNECTING, PING, DOWNLOAD, UPLOAD, DONE, FAILED };
+enum phase { IDLE, CONNECTING, PING, DOWNLOAD, UPLOAD, DONE, FAILED };
 
 static struct {
     pid_t pid;
@@ -101,12 +102,6 @@ static struct {
     lv_obj_t *marks[SEGMENTS + 1];
 } ui;
 static lv_timer_t *reader;
-
-/* The install dialog: the step, and the progress of the download. */
-static struct {
-    lv_obj_t *step, *button;
-    struct ui_meter meter;
-} setup;
 
 static float gauge_position(double mbps)
 {
@@ -157,7 +152,6 @@ static void paint_gauge(void)
 {
     if (!ui.root)
         return;
-    bool busy = test.phase >= INSTALLING && test.phase <= UPLOAD;
     bool running = test.phase >= CONNECTING && test.phase <= UPLOAD;
     float at = gauge_position(test.shown);
     lv_arc_set_value(ui.arc, (int32_t)lroundf(at * 1000));
@@ -166,9 +160,9 @@ static void paint_gauge(void)
         lv_obj_set_style_text_color(ui.marks[i], (float)i / SEGMENTS <= at ? theme.text : theme.dim, 0);
         lv_obj_set_hidden(ui.marks[i], !running);
     }
-    lv_obj_set_hidden(ui.go, busy);
+    lv_obj_set_hidden(ui.go, running);
     lv_obj_set_hidden(ui.arc, !running);
-    lv_obj_set_hidden(ui.readout, !busy);
+    lv_obj_set_hidden(ui.readout, !running);
     if (test.phase == DOWNLOAD || test.phase == UPLOAD) {
         ui_set_fmt(ui.value, test.shown >= 100 ? "%.0f" : "%.1f", test.shown);
         ui_set_fmt(ui.unit, "%s Mbps", test.phase == UPLOAD ? "↑" : "↓");
@@ -177,9 +171,9 @@ static void paint_gauge(void)
         ui_set_text(ui.unit, L("延迟 ms", "Ping ms"));
     } else {
         ui_set_text(ui.value, "···");
-        ui_set_text(ui.unit, test.phase == INSTALLING ? L("正在下载安装", "Installing") : L("连接服务器", "Connecting"));
+        ui_set_text(ui.unit, L("连接服务器", "Connecting"));
     }
-    lv_obj_set_style_text_color(ui.unit, busy ? phase_color() : theme.dim, 0);
+    lv_obj_set_style_text_color(ui.unit, running ? phase_color() : theme.dim, 0);
     lv_obj_invalidate(ui.needle);
 }
 
@@ -341,8 +335,6 @@ static void parse(const char *line)
     paint();
 }
 
-static void install_line(const char *line);
-
 static void take_line(void)
 {
     char clean[sizeof test.line];
@@ -363,17 +355,15 @@ static void take_line(void)
     }
     clean[n] = 0;
     test.len = 0;
-    if (test.phase == INSTALLING)
-        install_line(clean);
-    else if (n)
+    if (n)
         parse(clean);
 }
 
-static void run(enum phase phase, char *const argv[]);
+static void run(char *const argv[]);
 
 static void run_test(void)
 {
-    run(CONNECTING, (char *const[]){(char *)backend->program, NULL});
+    run((char *const[]){(char *)backend->program, NULL});
 }
 
 static int reap(void)
@@ -381,7 +371,8 @@ static int reap(void)
     int status = 0;
     close(test.fd);
     test.fd = -1;
-    waitpid(test.pid, &status, 0);
+    while (waitpid(test.pid, &status, 0) < 0 && errno == EINTR) {
+    }
     test.pid = -1;
     lv_anim_delete(&test, shown_anim);
     test.shown = 0;
@@ -391,20 +382,7 @@ static int reap(void)
 static void finish(void)
 {
     int status = reap();
-    bool exited = WIFEXITED(status) && WEXITSTATUS(status) == 0;
-    if (test.phase == INSTALLING) {
-        test.phase = IDLE;
-        if (exited) {
-            dialog_close();
-            run_test();
-            return;
-        }
-        ui_set_text(setup.step, L("安装失败，请检查网络后重试", "The install failed; check the network and retry"));
-        ui_button_text(setup.button, L("关闭", "Close"));
-        paint();
-        return;
-    }
-    bool ok = exited && test.down > 0;
+    bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0 && test.down > 0;
     test.phase = ok ? DONE : FAILED;
     if (!ok)
         toast("%s", L("测速失败，请检查网络后重试", "Speed test failed; check the network and retry"));
@@ -413,9 +391,6 @@ static void finish(void)
 
 static void poll_output(lv_timer_t *t)
 {
-    /* An install may be silent for a while; the screen stays up until it ends. */
-    if (test.phase == INSTALLING)
-        idle_reset();
     char buf[1024];
     for (;;) {
         ssize_t n = read(test.fd, buf, sizeof buf);
@@ -428,6 +403,8 @@ static void poll_output(lv_timer_t *t)
             }
             continue;
         }
+        if (n < 0 && errno == EINTR)
+            continue;
         if (n < 0 && errno == EAGAIN)
             return;
         /* EOF, or EIO once the program has exited and closed the terminal. */
@@ -438,7 +415,7 @@ static void poll_output(lv_timer_t *t)
     }
 }
 
-static void run(enum phase phase, char *const argv[])
+static void run(char *const argv[])
 {
     int fd;
     pid_t pid = forkpty(&fd, NULL, NULL, NULL);
@@ -452,58 +429,9 @@ static void run(enum phase phase, char *const argv[])
     }
     fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     fcntl(fd, F_SETFD, FD_CLOEXEC);
-    test = (typeof(test)){.pid = pid, .fd = fd, .phase = phase};
+    test = (typeof(test)){.pid = pid, .fd = fd, .phase = CONNECTING};
     reader = lv_timer_create(poll_output, 50, NULL);
     paint();
-}
-
-static void install_progress(int percent)
-{
-    char text[8];
-    snprintf(text, sizeof text, "%d%%", percent);
-    ui_meter_set(&setup.meter, text, percent, theme.accent);
-}
-
-static void install_line(const char *line)
-{
-    unsigned long long done, total;
-    if (!strcmp(line, "@check")) {
-        ui_set_text(setup.step, L("正在获取最新版本…", "Finding the latest version…"));
-    } else if (!strcmp(line, "@update")) {
-        ui_set_text(setup.step, L("正在更新软件源…", "Updating the package feeds…"));
-    } else if (!strcmp(line, "@add")) {
-        ui_set_text(setup.step, L("正在下载安装…", "Downloading and installing…"));
-        install_progress(0);
-    } else if (!strncmp(line, "@download ", 10)) {
-        char version[32] = "", host[64] = "", step[128];
-        sscanf(line + 10, "%31s %63s", version, host);
-        snprintf(step, sizeof step, L("正在从 %s 下载 v%s…", "Downloading v%2$s from %1$s…"), *host ? host : "github.com",
-                 version);
-        ui_set_text(setup.step, step);
-        install_progress(0);
-    } else if (!strcmp(line, "@install")) {
-        ui_set_text(setup.step, L("正在安装…", "Installing…"));
-    } else if (sscanf(line, "%llu/%llu", &done, &total) == 2 && total) {
-        install_progress((int)(done * 100 / total));
-    } else if (strchr(line, '%')) {
-        /* curl's bar ends "  42.3%"; uclient-fetch's has " 42% |". */
-        const char *mark = strrchr(line, '%'), *digits = mark;
-        while (digits > line && ((digits[-1] >= '0' && digits[-1] <= '9') || digits[-1] == '.'))
-            digits--;
-        if (digits != mark)
-            install_progress((int)strtod(digits, NULL));
-    }
-}
-
-static void on_close(lv_event_t *e)
-{
-    dialog_close();
-}
-
-static void install_closed(void)
-{
-    if (test.phase == INSTALLING)
-        speedtest_stop();
 }
 
 static void on_install(lv_event_t *e)
@@ -511,16 +439,7 @@ static void on_install(lv_event_t *e)
     const char *name = strrchr(backend->program, '/') + 1;
     char title[64];
     snprintf(title, sizeof title, L("正在安装 %s", "Installing %s"), name);
-    dialog_open(title, NULL);
-    setup = (typeof(setup)){0};
-    lv_obj_t *sheet = dialog_sheet();
-    setup.step = ui_text(sheet, 13, false, theme.text);
-    lv_obj_set_width(setup.step, LV_PCT(100));
-    lv_label_set_long_mode(setup.step, LV_LABEL_LONG_MODE_WRAP);
-    setup.meter = ui_meter(sheet, L("进度", "Progress"));
-    setup.button = dialog_button(L("取消", "Cancel"), on_close, NULL);
-    dialog_on_close(install_closed);
-    run(INSTALLING, (char *const[]){"/bin/sh", "-c", (char *)backend->install, NULL});
+    install_run(title, backend->install, run_test);
 }
 
 static void start(void)
@@ -558,6 +477,7 @@ static void halt(void)
 
 void speedtest_stop(void)
 {
+    install_cancel();
     if (test.pid < 0)
         return;
     halt();
@@ -567,7 +487,7 @@ void speedtest_stop(void)
 
 bool speedtest_cancel(void)
 {
-    if (test.pid < 0 || test.phase == INSTALLING)
+    if (test.pid < 0)
         return false;
     halt();
     speedtest_reset();
@@ -577,7 +497,7 @@ bool speedtest_cancel(void)
 
 bool speedtest_running(void)
 {
-    return test.pid >= 0;
+    return test.pid >= 0 || install_running();
 }
 
 static void load_backend(void)
