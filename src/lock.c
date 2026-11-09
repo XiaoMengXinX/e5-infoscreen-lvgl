@@ -140,8 +140,11 @@ static lv_opa_t drag_opa(int32_t y)
  * for the touch. */
 static struct {
     lv_draw_buf_t *page_pixels, *lock_pixels;
-    lv_obj_t *page, *lock;
+    lv_obj_t *page, *lock, *wall;
 } still;
+
+/* The lock's wallpaper reaches behind the status bar, which then moves with the lock. */
+static bool through_bar;
 
 static void still_free(void)
 {
@@ -150,29 +153,58 @@ static void still_free(void)
     still = (typeof(still)){0};
 }
 
+static void bar_restore(void)
+{
+    shell_bar_over_lock(false);
+    shell_wallpaper_locked(locked);
+}
+
 static void still_end(void)
 {
     if (!still.lock)
         return;
+    bool wall = still.wall != NULL;
     lv_obj_delete(still.page);
     lv_obj_delete(still.lock);
+    if (wall)
+        lv_obj_delete(still.wall);
     still_free();
+    if (wall)
+        bar_restore();
     lv_obj_set_hidden(shell_root(), false);
 }
 
 static void still_begin(void)
 {
+    const lv_draw_buf_t *wall = through_bar ? wallpaper_get(WALLPAPER_LOCK) : NULL;
+    /* The bar stays in the page's layout, unseen, so the page is pictured as it is. */
+    if (wall) {
+        shell_wallpaper_locked(false);
+        shell_bar_hide();
+    }
     still.page_pixels = lv_snapshot_take(lv_screen_active(), LV_COLOR_FORMAT_XRGB8888);
     still.lock_pixels = lv_snapshot_take(ui.root, LV_COLOR_FORMAT_XRGB8888);
     if (!still.page_pixels || !still.lock_pixels) {
         still_free();
+        if (wall)
+            bar_restore();
         return;
     }
     still.page = lv_image_create(lv_layer_top());
     lv_image_set_src(still.page, still.page_pixels);
     lv_obj_move_to_index(still.page, 0);
+    if (wall) {
+        still.wall = lv_image_create(lv_layer_top());
+        lv_image_set_src(still.wall, wall);
+        lv_obj_set_size(still.wall, LV_PCT(100), shell_status_bar_height());
+        lv_image_set_inner_align(still.wall, LV_IMAGE_ALIGN_TOP_LEFT);
+        lv_obj_move_to_index(still.wall, lv_obj_get_index(lv_obj_get_parent(ui.root)));
+        shell_wallpaper_locked(true);
+        shell_bar_over_lock(true);
+    }
     still.lock = lv_image_create(lv_obj_get_parent(ui.root));
     lv_image_set_src(still.lock, still.lock_pixels);
+    lv_obj_align(still.lock, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_hidden(shell_root(), true);
 }
 
@@ -188,6 +220,11 @@ static void place(int32_t y, lv_opa_t opa)
         lv_obj_set_style_opa(ui.root, LV_OPA_TRANSP, 0);
         lv_obj_set_style_translate_y(still.lock, y, 0);
         lv_obj_set_style_image_opa(still.lock, opa, 0);
+        if (still.wall) {
+            lv_obj_set_style_translate_y(still.wall, y, 0);
+            lv_obj_set_style_image_opa(still.wall, opa, 0);
+            shell_bar_lock_place(y, opa);
+        }
     } else {
         lv_obj_set_style_opa(ui.root, opa, 0);
     }
@@ -197,7 +234,6 @@ static void anim_y(void *obj, int32_t v)
 {
     place(v, drag_opa(v));
 }
-
 
 static struct {
     int32_t from, to;
@@ -516,16 +552,18 @@ void lock_create(void)
     /* The standard size, so the lock always fits the panel. */
     float scale = theme_cap(1);
     int32_t height = screen_height() - shell_status_bar_height();
-    /* The lock slides up inside this window, which keeps the status bar clear. */
+    const lv_draw_buf_t *pixels = wallpaper_get(WALLPAPER_LOCK);
+    through_bar = theme.status_bar && pixels != NULL;
     lv_obj_t *window = lv_obj_create(lv_layer_top());
     lv_obj_remove_style_all(window);
-    lv_obj_set_size(window, LV_PCT(100), height);
+    lv_obj_set_size(window, LV_PCT(100), through_bar ? screen_height() : height);
     lv_obj_align(window, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_scrollable(window, false);
     lv_obj_set_clickable(window, false);
     ui.root = lv_obj_create(window);
     lv_obj_remove_style_all(ui.root);
     lv_obj_set_size(ui.root, LV_PCT(100), height);
+    lv_obj_align(ui.root, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_style_bg_opa(ui.root, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(ui.root, theme.hero_start, 0);
     lv_obj_set_style_bg_grad_color(ui.root, theme.bg, 0);
@@ -541,9 +579,8 @@ void lock_create(void)
     lv_obj_set_clickable(ui.root, true);
     lv_obj_set_press_lock(ui.root, true);
     lv_obj_add_event_cb(ui.root, on_touch, LV_EVENT_ALL, NULL);
-    const lv_draw_buf_t *pixels = wallpaper_get(WALLPAPER_LOCK);
     if (pixels) {
-        /* Placed as on the whole screen, it goes on behind the status bar (shell_wallpaper_locked). */
+        /* Placed as on the whole screen, it goes on behind the status bar. */
         lv_obj_t *wallpaper = lv_image_create(ui.root);
         lv_image_set_src(wallpaper, pixels);
         lv_obj_set_floating(wallpaper, true);

@@ -102,6 +102,9 @@ void shell_record_indicator(int seconds);
 lv_obj_t *shell_content(void);
 int shell_status_bar_height(void);
 void shell_wallpaper_locked(bool locked);
+void shell_bar_hide(void);
+void shell_bar_over_lock(bool over);
+void shell_bar_lock_place(int32_t y, lv_opa_t opa);
 
 /* lock.c */
 void lock_create(void);

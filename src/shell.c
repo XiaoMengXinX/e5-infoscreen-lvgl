@@ -46,6 +46,8 @@ static struct {
     lv_group_t *group, *notice_group, *picture_group;
 } ui;
 
+static int bar_slot;
+
 static int nav_slots[5];
 static struct {
     bool dragging;
@@ -1997,6 +1999,36 @@ void shell_wallpaper_locked(bool locked)
     bool solid = locked && theme.desktop_wallpaper && !ui.bar_wallpaper;
     lv_obj_set_style_bg_color(ui.bar, solid ? theme.bg : theme.chrome, 0);
     lv_obj_set_style_bg_opa(ui.bar, behind ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
+}
+
+void shell_bar_hide(void)
+{
+    lv_obj_set_style_opa(ui.bar, LV_OPA_TRANSP, 0);
+}
+
+void shell_bar_over_lock(bool over)
+{
+    lv_obj_t *parent = over ? lv_layer_top() : shell_root();
+    if (lv_obj_get_parent(ui.bar) != parent) {
+        if (over)
+            bar_slot = (int)lv_obj_get_index(ui.bar);
+        lv_obj_set_parent(ui.bar, parent);
+        lv_obj_set_pos(ui.bar, 0, 0);
+        if (!over)
+            lv_obj_move_to_index(ui.bar, bar_slot);
+    }
+    if (!over) {
+        lv_obj_set_style_translate_y(ui.bar, 0, 0);
+        lv_obj_set_style_opa(ui.bar, LV_OPA_COVER, 0);
+    }
+}
+
+void shell_bar_lock_place(int32_t y, lv_opa_t opa)
+{
+    if (lv_obj_get_parent(ui.bar) != lv_layer_top())
+        return;
+    lv_obj_set_style_translate_y(ui.bar, y, 0);
+    lv_obj_set_style_opa(ui.bar, opa, 0);
 }
 
 void shell_rebuild(void)
