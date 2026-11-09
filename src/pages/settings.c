@@ -433,8 +433,7 @@ static void add_local_items(cJSON *items, const char *cat)
         if (!access(MODEM_HELPER, X_OK) && !access(MODEM_AT, X_OK) &&
             !access(MODEM_LOCK, X_OK) && !access(PYTHON3, X_OK)) {
             cJSON *restart = local_item("modem_restart", "action", "重启基带", "Restart baseband",
-                                        "暂时中断所有 SIM 的通话和网络，完成后恢复射频和数据连接设置",
-                                        "Pauses calls and mobile service on all SIMs, then restores radio and data settings");
+                                        "", "");
             cJSON_AddBoolToObject(restart, "confirm", true);
             cJSON_AddItemToArray(items, restart);
         }
