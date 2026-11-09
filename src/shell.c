@@ -476,7 +476,7 @@ static struct {
     /* 1 while a finger carries the pill. */
     float grow, grow_v;
     double last;
-    lv_timer_t *timer;
+    bool moving;
 } pill;
 
 static void pill_render(void)
@@ -489,53 +489,43 @@ static void pill_render(void)
     lv_obj_set_pos(ui.nav_pill, lroundf(pill.x) - w / 2, lv_obj_get_y(b) + (lv_obj_get_height(b) - h) / 2);
 }
 
-/* One step of a spring; response is its period in seconds, damping 1 is critical. */
-static void spring(float *x, float *v, float target, float response, float damping, float dt)
-{
-    float w = 2 * 3.14159265f / response;
-    *v += (-w * w * (*x - target) - 2 * damping * w * *v) * dt;
-    *x += *v * dt;
-}
-
-static void pill_tick(lv_timer_t *t)
+static void pill_tick(void)
 {
     double now = now_ms();
-    float dt = fminf((float)(now - pill.last) / 1000, 0.05f);
+    float dt = (float)(now - pill.last) / 1000;
     pill.last = now;
     float grown = nav_drag.dragging ? 1 : 0;
     /* A stiff spring under the finger evens out the panel's uneven reports. */
     float response = nav_drag.dragging ? 0.1f : 0.36f, damping = nav_drag.dragging ? 1 : 0.68f;
-    for (; dt > 0; dt -= 0.004f) {
-        float step = fminf(dt, 0.004f);
-        spring(&pill.x, &pill.v, pill.target, response, damping, step);
-        spring(&pill.grow, &pill.grow_v, grown, 0.3f, 0.8f, step);
-    }
+    ui_spring(&pill.x, &pill.v, pill.target, response, damping, dt);
+    ui_spring(&pill.grow, &pill.grow_v, grown, 0.3f, 0.8f, dt);
     if (fabsf(pill.x - pill.target) < 0.5f && fabsf(pill.v) < 10 && fabsf(pill.grow - grown) < 0.003f &&
         fabsf(pill.grow_v) < 0.02f) {
         pill.x = pill.target;
         pill.v = pill.grow_v = 0;
         pill.grow = grown;
-        lv_timer_pause(pill.timer);
+        pill.moving = false;
     }
     pill_render();
 }
 
 static void pill_wake(void)
 {
-    if (lv_timer_get_paused(pill.timer)) {
+    if (!pill.moving) {
         pill.last = now_ms();
-        lv_timer_resume(pill.timer);
+        pill.moving = true;
+        lv_obj_invalidate(ui.nav);
     }
 }
 
 static void pill_aim(float x, bool animate)
 {
     pill.target = x;
-    if (animate && theme.motion) {
+    if (animate && theme.motion && !lv_obj_is_hidden(ui.nav)) {
         pill_wake();
         return;
     }
-    lv_timer_pause(pill.timer);
+    pill.moving = false;
     pill.x = x;
     pill.v = pill.grow_v = 0;
     pill.grow = nav_drag.dragging ? 1 : 0;
@@ -706,23 +696,28 @@ static void slide_done(lv_anim_t *a)
 
 /* The speed, in px/ms, a released drag hands to the slide it starts. */
 static float slide_speed;
+static float slide_slope[PAGE_COUNT];
 
 /* Slides a page from where it is, starting at speed when one is given. */
-static void slide(lv_obj_t *obj, int32_t to, float speed)
+static void slide(int page, int32_t to, float speed)
 {
+    lv_obj_t *obj = ui.pages[page];
     int32_t from = lv_obj_get_style_translate_x(obj, 0), w = LV_MAX(lv_obj_get_width(ui.content), 1);
-    int32_t distance = LV_MIN(LV_ABS(to - from), w);
+    int32_t distance = LV_ABS(to - from);
     lv_anim_t a;
     lv_anim_init(&a);
     lv_anim_set_var(&a, obj);
     lv_anim_set_exec_cb(&a, slide_x);
     lv_anim_set_values(&a, from, to);
-    if (speed > 0) {
-        /* The ease-out starts at 3 × distance / duration. */
-        lv_anim_set_duration(&a, (uint32_t)LV_CLAMP(120, lroundf(3 * (float)distance / speed), 320));
-        lv_anim_set_path_cb(&a, ui_ease_out);
+    if (speed > 0 && distance > 0) {
+        long duration = lroundf(3 * (float)distance / speed);
+        duration = LV_CLAMP(1, duration, 320);
+        slide_slope[page] = fminf(3, speed * duration / distance);
+        lv_anim_set_duration(&a, (uint32_t)duration);
+        lv_anim_set_user_data(&a, &slide_slope[page]);
+        lv_anim_set_path_cb(&a, ui_ease_release);
     } else {
-        lv_anim_set_duration(&a, LV_MAX(160, 320 * distance / w));
+        lv_anim_set_duration(&a, LV_MAX(160, 320 * LV_MIN(distance, w) / w));
         lv_anim_set_path_cb(&a, ui_ease_slide);
     }
     lv_anim_set_completed_cb(&a, slide_done);
@@ -756,8 +751,8 @@ void shell_show(enum page page)
             int32_t w = lv_obj_get_width(ui.content);
             if (was_hidden || lv_obj_get_style_translate_x(now, 0) * slide_dir <= 0)
                 slide_x(now, slide_dir * w);
-            slide(old, -slide_dir * w, slide_speed);
-            slide(now, 0, slide_speed);
+            slide(previous, -slide_dir * w, slide_speed);
+            slide(page, 0, slide_speed);
         } else {
             lv_obj_set_hidden(old, true);
             slide_x(old, 0);
@@ -1430,7 +1425,6 @@ void shell_touch_press(void)
 #define SWIPE_SAMPLES 8
 /* The span the speed is taken over, and the furthest it is projected. */
 #define SWIPE_SPEED_MS 60
-#define SWIPE_AHEAD_MS 20
 /* A release faster than this, in px/ms, goes the way the finger was moving. */
 #define SWIPE_FLING 0.35f
 
@@ -1484,7 +1478,8 @@ static float swipe_speed(double now)
 static int32_t swipe_finger(double now)
 {
     const int last = swipe.count - 1;
-    double ahead = LV_CLAMP(0, now - swipe.samples[last].time, SWIPE_AHEAD_MS);
+    double period = drm_display_period();
+    double ahead = LV_CLAMP(0, now - swipe.samples[last].time, period);
     return swipe.samples[last].x + (int32_t)lroundf(swipe_speed(now) * (float)ahead);
 }
 
@@ -1517,21 +1512,27 @@ static void swipe_place(double now)
 }
 
 /* Places the pages as each frame starts, and asks for another while the finger moves. */
-static void swipe_frame(lv_event_t *e)
+static void motion_frame(lv_event_t *e)
 {
+    if (pill.moving) {
+        if (lv_event_get_code(e) == LV_EVENT_REFR_START)
+            pill_tick();
+        else
+            lv_obj_invalidate(ui.nav);
+    }
     if (!swipe_dragging())
         return;
     double now = now_ms();
     if (lv_event_get_code(e) == LV_EVENT_REFR_START)
         swipe_place(now);
-    else if (swipe_finger(now + 1000.0 / 60) != swipe_finger(now))
+    else if (swipe_finger(now + drm_display_period()) != swipe_finger(now))
         lv_obj_invalidate(ui.content);
 }
 
-static void swipe_release(void)
+static void swipe_release(double time)
 {
     int32_t w = lv_obj_get_width(ui.content);
-    float speed = swipe_speed(now_ms());
+    float speed = swipe_speed(time);
     /* The finger moving the way the page went, or back. */
     bool onward = speed && (speed < 0) == (swipe.at < 0);
     bool on = fabsf(speed) > SWIPE_FLING ? onward : LV_ABS(swipe.at) > w / 3;
@@ -1544,15 +1545,14 @@ static void swipe_release(void)
             return;
         }
     }
-    lv_obj_t *page = ui.pages[app.page], *peer = swipe.peer >= 0 ? ui.pages[swipe.peer] : NULL;
     if (theme.motion) {
         float back = speed && !onward ? fabsf(speed) : 0;
-        slide(page, 0, back);
-        if (peer)
-            slide(peer, swipe.at < 0 ? w : -w, back);
+        slide(app.page, 0, back);
+        if (swipe.peer >= 0)
+            slide(swipe.peer, swipe.at < 0 ? w : -w, back);
         swipe.peer = -1;
     } else {
-        slide_x(page, 0);
+        slide_x(ui.pages[app.page], 0);
         peer_park();
     }
 }
@@ -1572,7 +1572,7 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
     }
     if (!pressed) {
         if (swipe.active && swipe.axis == 'x')
-            swipe_release();
+            swipe_release(time);
         swipe.active = false;
         swipe.axis = 0;
         return;
@@ -1590,6 +1590,7 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
         swipe.start = p;
         swipe.page = app.page;
         swipe.count = 0;
+        swipe_sample(time, p.x);
         if (swipe.forward)
             page_ops[app.page]->drag(true, p);
         return;
@@ -1598,7 +1599,7 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
         return;
     if (input_touch_count() > 1) {
         if (swipe.axis == 'x')
-            swipe_release();
+            swipe_release(time);
         swipe.active = false;
         swipe.axis = 'y';
         return;
@@ -2068,12 +2069,10 @@ void shell_init(void)
     chord_timer = lv_timer_create(chord_hold, 800, NULL);
     lv_timer_pause(chord_timer);
     power_key.timer = lv_timer_create(power_hold, 1200, NULL);
-    pill.timer = lv_timer_create(pill_tick, 1, NULL);
-    lv_timer_pause(pill.timer);
     lv_timer_pause(power_key.timer);
     build();
-    lv_display_add_event_cb(lv_display_get_default(), swipe_frame, LV_EVENT_REFR_START, NULL);
-    lv_display_add_event_cb(lv_display_get_default(), swipe_frame, LV_EVENT_REFR_READY, NULL);
+    lv_display_add_event_cb(lv_display_get_default(), motion_frame, LV_EVENT_REFR_START, NULL);
+    lv_display_add_event_cb(lv_display_get_default(), motion_frame, LV_EVENT_REFR_READY, NULL);
     lock_engage();
     shell_show(PAGE_OVERVIEW);
     clock_tick(NULL);

@@ -47,8 +47,12 @@ int ui_stack_gap(void);
 
 /* The progress at time t, 0 to 1, of CSS cubic-bezier(x1, y1, x2, y2). */
 float ui_bezier(float t, float x1, float y1, float x2, float y2);
-/* Cubic ease-out: it starts at three times the average speed, so an animation that
- * takes over from a finger can be timed to match the finger's speed. */
+/* Monotone release with an initial slope in [0, 3] and zero final speed. */
+float ui_release_progress(float t, float slope);
+/* The animation's user_data points to its initial normalized slope. */
+int32_t ui_ease_release(const lv_anim_t *a);
+/* response is the natural period in seconds; damping is in (0, 1]. */
+void ui_spring(float *x, float *v, float target, float response, float damping, float dt);
 int32_t ui_ease_out(const lv_anim_t *a);
 /* For a slide that starts from rest. */
 int32_t ui_ease_slide(const lv_anim_t *a);

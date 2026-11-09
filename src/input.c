@@ -284,6 +284,11 @@ int input_poll_fds(struct pollfd *fds)
     return device_count;
 }
 
+double input_touch_time(void)
+{
+    return touch.time;
+}
+
 int input_touch_count(void)
 {
     int n = 0;

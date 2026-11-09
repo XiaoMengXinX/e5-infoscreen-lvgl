@@ -298,17 +298,51 @@ void ui_set_fmt(lv_obj_t *label, const char *fmt, ...)
 
 float ui_bezier(float t, float x1, float y1, float x2, float y2)
 {
-    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    if (t <= 0 || t >= 1)
+        return t <= 0 ? 0 : 1;
+    float ax = 1 - 3 * x2 + 3 * x1, bx = 3 * x2 - 6 * x1, cx = 3 * x1;
     float lo = 0, hi = 1, u = t;
-    for (int i = 0; i < 20; i++) {
-        u = (lo + hi) / 2;
-        float x = 3 * (1 - u) * (1 - u) * u * x1 + 3 * (1 - u) * u * u * x2 + u * u * u;
-        if (x < t)
+    for (int i = 0; i < 12; i++) {
+        float error = ((ax * u + bx) * u + cx) * u - t;
+        if (fabsf(error) < 0.000001f)
+            break;
+        if (error < 0)
             lo = u;
         else
             hi = u;
+        float derivative = (3 * ax * u + 2 * bx) * u + cx;
+        float next = derivative > 0.000001f ? u - error / derivative : -1;
+        u = next > lo && next < hi ? next : (lo + hi) / 2;
     }
     return 3 * (1 - u) * (1 - u) * u * y1 + 3 * (1 - u) * u * u * y2 + u * u * u;
+}
+
+float ui_release_progress(float t, float slope)
+{
+    t = LV_CLAMP(0, t, 1);
+    return t * (slope + t * (3 - 2 * slope + t * (slope - 2)));
+}
+
+int32_t ui_ease_release(const lv_anim_t *a)
+{
+    float t = a->duration ? (float)a->act_time / a->duration : 1;
+    float slope = *(const float *)a->user_data;
+    return a->start_value + (int32_t)lroundf((a->end_value - a->start_value) * ui_release_progress(t, slope));
+}
+
+void ui_spring(float *x, float *v, float target, float response, float damping, float dt)
+{
+    float w = 2 * 3.14159265f / response, y = *x - target;
+    float decay = expf(-damping * w * dt);
+    if (damping == 1) {
+        float c = *v + w * y;
+        *x = target + (y + c * dt) * decay;
+        *v = (*v - w * c * dt) * decay;
+    } else {
+        float wd = w * sqrtf(1 - damping * damping), s = sinf(wd * dt), c = cosf(wd * dt);
+        *x = target + decay * (y * c + (*v + damping * w * y) * s / wd);
+        *v = decay * (*v * c - (damping * w * *v + w * w * y) * s / wd);
+    }
 }
 
 int32_t ui_ease_slide(const lv_anim_t *a)

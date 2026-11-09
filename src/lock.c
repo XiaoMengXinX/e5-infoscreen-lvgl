@@ -34,10 +34,10 @@ static cJSON *usage;
 static struct {
     bool active;
     int32_t x, y, last_x, last_y, peak_y, base;
-    uint32_t time;
+    double time;
     struct {
         int32_t y;
-        uint32_t t;
+        double t;
     } samples[SAMPLES];
     int count;
 } gesture;
@@ -238,12 +238,13 @@ static void anim_y(void *obj, int32_t v)
 static struct {
     int32_t from, to;
     lv_opa_t opa;
+    float tangent;
 } rise;
 
 static void rise_step(void *obj, int32_t v)
 {
     float t = (float)v / 1024;
-    place(rise.from + lroundf((float)(rise.to - rise.from) * ui_bezier(t, 0.22f, 0.75f, 0.2f, 1)),
+    place(rise.from + lroundf((float)(rise.to - rise.from) * ui_release_progress(t, rise.tangent)),
           (lv_opa_t)lroundf(rise.opa * (1 - ui_bezier(t, 0.25f, 0.1f, 0.25f, 1))));
 }
 
@@ -363,18 +364,24 @@ static void unlock(float velocity)
     if (animating)
         return;
     carried_touch = input_touch_count() > 0;
-    /* The web screen's timing. */
     int32_t current = lv_obj_get_style_translate_y(ui.root, 0);
     float remaining = (float)(screen_height() + current);
+    int32_t target = -lv_obj_get_height(ui.root) * 105 / 100;
+    float distance = (float)LV_ABS(target - current);
     uint32_t ms = theme.motion ? (uint32_t)fminf(320, fmaxf(140, remaining / fmaxf(1.5f, velocity))) : 0;
+    if (theme.motion && velocity > 0 && distance > 0) {
+        long duration = lroundf(3 * distance / velocity);
+        ms = (uint32_t)LV_CLAMP(1, duration, 320);
+    }
     if (!ms) {
         finish_unlock();
         return;
     }
     animating = true;
     rise.from = current;
-    rise.to = -lv_obj_get_height(ui.root) * 105 / 100;
+    rise.to = target;
     rise.opa = drag_opa(current);
+    rise.tangent = velocity > 0 && distance > 0 ? fminf(3, velocity * ms / distance) : 3;
     lv_anim_delete(ui.root, anim_y);
     lv_anim_t a;
     lv_anim_init(&a);
@@ -399,7 +406,7 @@ static void gesture_start(lv_point_t p)
     gesture.active = true;
     gesture.x = gesture.last_x = p.x;
     gesture.y = gesture.last_y = gesture.peak_y = p.y;
-    gesture.time = lv_tick_get();
+    gesture.time = input_touch_time();
     gesture.samples[0].y = p.y;
     gesture.samples[0].t = gesture.time;
     gesture.count = 1;
@@ -419,7 +426,7 @@ static void gesture_move(lv_point_t p)
     gesture.last_y = p.y;
     if (p.y < gesture.peak_y)
         gesture.peak_y = p.y;
-    uint32_t now = lv_tick_get();
+    double now = input_touch_time();
     if (gesture.count == SAMPLES) {
         memmove(gesture.samples, gesture.samples + 1, sizeof gesture.samples[0] * (SAMPLES - 1));
         gesture.count--;
@@ -439,9 +446,9 @@ static void gesture_end(lv_point_t p)
     if (!gesture.active)
         return;
     int32_t h = screen_height();
-    uint32_t now = lv_tick_get();
+    double now = input_touch_time();
     int32_t dy = gesture.y - p.y - gesture.base, dx = abs(gesture.x - p.x);
-    uint32_t elapsed = now - gesture.time;
+    double elapsed = now - gesture.time;
     const char *distance = jstr(screen_config(), "unlock_distance");
     bool longer = distance && !strcmp(distance, "long");
     float threshold = longer ? (float)h * 0.5f : fmaxf(88, (float)h * 0.20f);
@@ -459,7 +466,7 @@ static void gesture_end(lv_point_t p)
     bool reversed = p.y - gesture.peak_y > fmaxf(16, (float)h * 0.035f);
     float projected = (float)dy + fminf(160, velocity * velocity / (2 * 0.0045f));
     bool flick = !longer && dy >= 48 && velocity >= 0.5f && projected >= threshold;
-    if (!reversed && (dy >= threshold || flick) && dy > dx * 1.35f && elapsed >= 24 && now - wake_at >= 180)
+    if (!reversed && (dy >= threshold || flick) && dy > dx * 1.35f && elapsed >= 24 && lv_tick_elaps(wake_at) >= 180)
         unlock(velocity);
     else
         reset_gesture();

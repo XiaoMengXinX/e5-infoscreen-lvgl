@@ -12,6 +12,8 @@ void input_init(lv_display_t *display);
 int input_poll_fds(struct pollfd *fds);
 void input_dispatch(const struct pollfd *fds, int count);
 int input_touch_count(void);
+/* Last touch report's monotonic timestamp, in milliseconds. */
+double input_touch_time(void);
 /* Releases the pressed widget and keeps the rest of the touch from LVGL. */
 void input_touch_take(void);
 void input_focus_key(uint32_t key);
