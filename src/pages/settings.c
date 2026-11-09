@@ -1894,6 +1894,7 @@ static void create(lv_obj_t *page)
     if (!depth)
         settings_reset();
     snprintf(stack[0].title, sizeof stack[0].title, "%s", L("设置", "Settings"));
+    load_categories();
     render();
 }
 

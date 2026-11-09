@@ -32,7 +32,7 @@ static struct {
 
 static cJSON *messages;
 static double open_id = -1;
-static bool reading, has_unread_snapshot;
+static bool reading, fetching, has_unread_snapshot;
 static cJSON *unread_snapshot;
 static char hidden_revision[64];
 static lv_timer_t *disarm_timer;
@@ -346,6 +346,7 @@ static void pull_reset(void)
 
 static void loaded(int status, cJSON *r, void *ctx)
 {
+    fetching = false;
     shell_page_loading(PAGE_SMS, false);
     bool ok = api_read_ok(status, r);
     shell_page_error(PAGE_SMS, !ok);
@@ -375,6 +376,7 @@ static void loaded(int status, cJSON *r, void *ctx)
 
 static void load(double open_after)
 {
+    fetching = true;
     shell_page_loading(PAGE_SMS, true);
     api_get("/sms", loaded, (void *)(intptr_t)open_after);
 }
@@ -419,8 +421,6 @@ void sms_check(const cJSON *st)
     bool hidden_changed = revision && *hidden_revision && strcmp(revision, hidden_revision);
     snprintf(hidden_revision, sizeof hidden_revision, "%s", revision ? revision : "");
     bool here = app.page == PAGE_SMS && !app.blank;
-    if (hidden_changed && here)
-        load(-1);
 
     const cJSON *now = jget(st, "sms.unread");
     cJSON *before = unread_snapshot;
@@ -441,18 +441,20 @@ void sms_check(const cJSON *st)
     if (fresh < 0) {
         const cJSON *current = find(open_id);
         const char *state = jstr(current, "state");
-        if (here && ((open_id < 0 && cJSON_GetArraySize(now) != before_count) || (state && !strcmp(state, "receiving"))))
+        if (here && (hidden_changed || (open_id < 0 && cJSON_GetArraySize(now) != before_count) ||
+                     (state && !strcmp(state, "receiving"))))
             load(-1);
         return;
     }
-    if (!jtrue(st, "sms.screen"))
+    bool show = jtrue(st, "sms.screen");
+    load(show ? fresh : -1);
+    if (!show)
         return;
     if (app.blank)
         screen_set_blank(false);
     if (!lock_active() && app.page != PAGE_SMS)
         shell_show(PAGE_SMS);
     toast("%s", L("新短信", "New message"));
-    load(fresh);
 }
 
 /* Rubber-band resistance toward PULL_REACH. */
@@ -506,7 +508,6 @@ static void drag(bool pressed, lv_point_t p)
 static void create(lv_obj_t *page)
 {
     pull.page = page;
-    lv_obj_set_scroll_elastic(page, false);
     pull.hint = ui_box(page, LV_FLEX_FLOW_ROW, 6);
     lv_obj_set_width(pull.hint, LV_SIZE_CONTENT);
     lv_obj_set_floating(pull.hint, true);
@@ -543,6 +544,8 @@ static void create(lv_obj_t *page)
         lv_timer_pause(disarm_timer);
     }
     disarm();
+    if (!messages && !fetching)
+        load(-1);
     if (messages)
         render_list();
     if (open_id >= 0 && find(open_id))
@@ -553,7 +556,8 @@ static void create(lv_obj_t *page)
 
 static void shown(void)
 {
-    load(-1);
+    if (!fetching)
+        load(-1);
     mark_read();
 }
 
