@@ -41,6 +41,11 @@ static void show(lv_obj_t *view)
         lv_obj_add_state(list_focus, LV_STATE_FOCUS_KEY);
         list_focus = NULL;
     }
+    if (view == list) {
+        lv_obj_t *page = lv_obj_get_parent(list);
+        lv_obj_update_layout(page);
+        lv_obj_scroll_to_y(page, 0, LV_ANIM_OFF);
+    }
 }
 
 static void on_speedtest(lv_event_t *e)
