@@ -38,6 +38,7 @@ class RestartTests(unittest.TestCase):
         self.fail = None
         self.calls = []
         self.restart.stage = lambda name: None
+        self.original_reset_cp = self.restart.reset_cp
         self.restart.reset_cp = self.reset_cp
         self.restart.run = self.run_command
 
@@ -53,7 +54,7 @@ class RestartTests(unittest.TestCase):
         if argv[0] == 'uci':
             text = 'wan\n'
         elif argv[0] == 'pidof':
-            code = 0 if argv[1] == 'e5-modemd' else 1
+            code = 1
         elif argv[0] == 'ubus':
             if argv[-1] == 'status':
                 text = json.dumps(self.wan)
@@ -98,6 +99,14 @@ class RestartTests(unittest.TestCase):
         for path in ('sms.lock', 'switch.lock', 'network.lock'):
             with (self.root / path).open('a') as lock:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def test_cp_reset_uses_kernel_stop_and_start(self):
+        modem = self.root / 'modem'
+        modem.touch()
+        self.original_reset_cp.__func__.__globals__['MODEM'] = modem
+        with patch.object(self.scope['fcntl'], 'ioctl') as ioctl:
+            self.original_reset_cp()
+        self.assertEqual([call.args[1] for call in ioctl.call_args_list], [0x4d0c, 0x4d0d])
 
     def test_manual_data_off_stays_off(self):
         self.restart.restart()

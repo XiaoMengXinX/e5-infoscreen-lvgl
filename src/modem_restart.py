@@ -8,11 +8,11 @@ import re
 import subprocess
 import sys
 import time
-import uuid
 
 DASH = Path('/usr/libexec/unisoc-modem')
 POLICY = Path('/etc/e5/sim-radio')
 CARD = Path('/sys/module/sipc_wwan/parameters/card')
+MODEM = Path('/dev/modem')
 RUN = Path('/run/unisoc-data-sim')
 SCREEN = Path('/usr/libexec/e5-infoscreen/ui')
 STK = Path('/tmp/e5-stk')
@@ -20,6 +20,8 @@ MARKER = Path('/run/unisoc-modem-lock-replay-done')
 SMS_LOCK = Path('/tmp/run/e5-sms/modem.lock')
 SWITCH_LOCK = RUN / 'switch.lock'
 NETWORK_LOCK = Path('/tmp/unisoc-modem/lock-apply.lock')
+MODEM_STOP = ord('M') << 8 | 0x0c
+MODEM_START = ord('M') << 8 | 0x0d
 
 
 class ModemRestart:
@@ -74,18 +76,9 @@ class ModemRestart:
         raise RuntimeError(f'Cannot determine whether SIM {slot + 1} is present')
 
     def reset_cp(self):
-        token = uuid.uuid4().hex
-        self.run(['logger', '-t', 'e5-modem-restart', 'e5-modem-restart ' + token])
-        self.run(['/usr/sbin/e5-modemd', 'blocked'])
-        until = min(self.deadline, time.monotonic() + 60)
-        while time.monotonic() < until:
-            logs = self.run(['logread', '-e', 'e5-modem']).stdout
-            current = logs.partition(token)[2]
-            transition = re.search(r'e5-modemd: Modem(?: State:)? (?:Blocked|Reset)', current)
-            if transition and re.search(r'e5-modemd: Modem(?: State:)? Alive', current[transition.end():]):
-                return
-            time.sleep(.5)
-        raise TimeoutError('CP did not finish restarting')
+        with MODEM.open('r+b', buffering=0) as modem:
+            fcntl.ioctl(modem.fileno(), MODEM_STOP)
+            fcntl.ioctl(modem.fileno(), MODEM_START)
 
     def map_sim_channels(self):
         (STK / 'mapped').unlink(missing_ok=True)
@@ -165,8 +158,6 @@ class ModemRestart:
                 raise ValueError('Cannot read the data connection policy')
             if self.run(['pidof', 'lpac'], check=False).returncode == 0:
                 raise RuntimeError('An eSIM operation is running')
-            if self.run(['pidof', 'e5-modemd'], check=False).returncode:
-                raise RuntimeError('CP reset service is not running')
             available = bool(saved.get('available')) and self.flags[self.own]
             self.stage('preparing')
             try:
