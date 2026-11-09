@@ -1,6 +1,8 @@
 #define access test_access
+#define execv test_execv
 #include "../src/lpac.c"
 #undef access
+#undef execv
 
 #include <assert.h>
 
@@ -12,13 +14,24 @@ int test_access(const char *path, int mode)
 
 static bool completed, result_ok;
 static size_t result_length;
+static char result_aid[33];
 void idle_reset(void) {}
+
+int test_execv(const char *path, char *const argv[])
+{
+    const char *aid = getenv("LPAC_CUSTOM_ISD_R_AID");
+    printf("{\"type\":\"lpa\",\"payload\":{\"code\":0,\"data\":\"%s\"}}\n", aid ? aid : "standard");
+    fflush(stdout);
+    _exit(0);
+}
 
 static void result(bool ok, const cJSON *data, const char *error, const char *detail)
 {
     completed = true;
     result_ok = ok;
     result_length = cJSON_IsString(data) ? strlen(data->valuestring) : 0;
+    if (cJSON_IsString(data))
+        copy_text(result_aid, sizeof result_aid, data->valuestring);
 }
 
 static void receive(pid_t child, int fd)
@@ -43,6 +56,7 @@ static void cancel_signal(int sig) { interrupted = 1; }
 
 int main(void)
 {
+    lv_init();
     assert(!lpac_present());
     program_present = true;
     assert(!lpac_present());
@@ -134,10 +148,44 @@ int main(void)
     memset(activation, 'a', sizeof activation - 1);
     activation[sizeof activation - 1] = 0;
     ending = true;
-    lpac_call(1, (char *const[]){"profile", "download", "-a", activation, NULL}, NULL, result);
+    char aid[] = "A06573746B6D65FFFF4953442D522031";
+    lpac_call(1, aid, (char *const[]){"profile", "download", "-a", activation, NULL}, NULL, result);
+    aid[0] = 'B';
+    assert(!strcmp(run.q[run.head].aid, "A06573746B6D65FFFF4953442D522031"));
     assert(!strcmp(run.q[run.head].argv[4], activation));
     free_job(&run.q[run.head]);
     run.count = 0;
     ending = false;
-    puts("LPAC: replies, 50KB output, graceful cancellation, preview, refresh failures and long arguments passed");
+    run.refreshing = true;
+    run.refresh_ok = true;
+    run.refresh_done = result;
+    completed = false;
+    on_estk_opened("+CCHO: 2\r\nOK\r\n");
+    assert(!completed && at.active);
+    at.active = false;
+    at.then("OK\r\n");
+    assert(completed && result_ok && !run.refreshing);
+    run.refreshing = true;
+    run.refresh_ok = true;
+    run.refresh_done = result;
+    completed = false;
+    on_estk_opened("+CME ERROR: 100\r\n");
+    assert(completed && !result_ok && !run.refreshing);
+    assert(setenv("LPAC_CUSTOM_ISD_R_AID", "inherited", 1) == 0);
+    completed = false;
+    lpac_call(1, "A06573746B6D65FFFF4953442D522031", (char *const[]){"chip", "info", NULL}, NULL, result);
+    for (int attempt = 0; !completed && attempt < 1000; attempt++) {
+        output_poll();
+        usleep(1000);
+    }
+    assert(completed && !strcmp(result_aid, "A06573746B6D65FFFF4953442D522031"));
+    completed = false;
+    lpac_call(0, NULL, (char *const[]){"chip", "info", NULL}, NULL, result);
+    for (int attempt = 0; !completed && attempt < 1000; attempt++) {
+        output_poll();
+        usleep(1000);
+    }
+    assert(completed && !strcmp(result_aid, "standard"));
+    lpac_stop();
+    puts("LPAC: replies, 50KB output, cancellation, preview, refresh, arguments and per-job SE selection passed");
 }

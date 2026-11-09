@@ -25,10 +25,15 @@ enum action { A_SWITCH, A_RENAME, A_DELETE, A_DOWNLOAD, A_NOTIFICATION };
 struct slot {
     char chip_error[64];
     cJSON *chip, *profiles, *notifs;
+    const char *aid;
+    unsigned ses;
+    bool scanned;
 };
 
+static const char *const se_aids[] = {"A06573746B6D65FFFF4953442D522030", "A06573746B6D65FFFF4953442D522031"};
+
 static struct {
-    lv_obj_t *root, *body, *switcher, *tabs[2];
+    lv_obj_t *root, *body, *switcher, *tabs[2], *se_switcher;
 } ui;
 
 static struct {
@@ -41,7 +46,7 @@ static struct {
     bool enabled, downloading, cancelling;
     cJSON *metadata, *before;
     uint32_t seq;
-    int reloads, pending;
+    int reloads, pending, probe;
     lv_obj_t *step;
 } state = {.current = 1};
 
@@ -54,6 +59,7 @@ static struct {
 } bulk;
 
 static bool open_now, on_switcher, pick;
+static bool restore_se_focus;
 static lv_timer_t *reload_timer;
 
 static void render(void);
@@ -96,6 +102,11 @@ static void on_before_change(bool ok, const cJSON *data, const char *error, cons
 static void on_auto_list(bool ok, const cJSON *data, const char *error, const char *detail);
 static void download_dialog(void);
 static void download_command(void);
+
+static void call(char *const argv[], lpac_progress_fn progress, lpac_done_fn done)
+{
+    lpac_call(state.current, state.slots[state.current].aid, argv, progress, done);
+}
 
 static void copy_text(char *out, size_t size, const char *in)
 {
@@ -261,9 +272,40 @@ static void missing(void)
     lv_obj_set_flex_grow(button, 1);
 }
 
+static void select_se(int index)
+{
+    const char *aid = se_aids[index];
+    if (state.slots[state.current].aid == aid)
+        return;
+    restore_se_focus = input_key_focus(input_group()) == ui.se_switcher;
+    state.slots[state.current].aid = aid;
+    load();
+}
+
+static void on_se(lv_event_t *e)
+{
+    select_se((int)(intptr_t)lv_event_get_user_data(e));
+}
+
 static void root(void)
 {
     struct slot *s = &state.slots[state.current];
+    if (s->ses) {
+        lv_obj_t *scope = ui_card(ui.body);
+        lv_label_set_text(ui_text(scope, 12, false, theme.dim), L("选择 SE", "Select SE"));
+        lv_obj_t *row = ui.se_switcher = ui_choices(scope);
+        ui_focusable(row);
+        lv_obj_set_style_outline_pad(row, S(4), LV_STATE_FOCUS_KEY);
+        int selected = 0;
+        for (int index = 0; index < 2; index++) {
+            if (!(s->ses & (1u << index)))
+                continue;
+            ui_choice(row, index ? "SE 1" : "SE 0", on_se, (void *)(intptr_t)index);
+            if (s->aid == se_aids[index])
+                selected = (int)lv_obj_get_child_count(row) - 1;
+        }
+        ui_choices_paint(row, selected, false);
+    }
     if (!s->chip && !s->profiles) {
         message(!strcmp(s->chip_error, "euicc_init")
                     ? L("该卡槽没有 eUICC", "No eUICC in this slot")
@@ -493,6 +535,7 @@ static void render(void)
     paint_switcher();
     keyboard_close();
     lv_obj_clean(ui.body);
+    ui.se_switcher = NULL;
     switch (state.view) {
     case V_LOADING:
         message(L("正在读取 eSIM 信息…", "Reading the eSIM…"));
@@ -502,6 +545,11 @@ static void render(void)
         break;
     case V_ROOT:
         root();
+        if (restore_se_focus && ui.se_switcher) {
+            lv_group_focus_obj(ui.se_switcher);
+            lv_obj_add_state(ui.se_switcher, LV_STATE_FOCUS_KEY);
+            restore_se_focus = false;
+        }
         break;
     case V_MISSING:
         missing();
@@ -553,8 +601,8 @@ static void on_switch(lv_event_t *e)
     state.action = A_SWITCH;
     state.view = V_WAIT;
     render();
-    lpac_call(state.current, (char *const[]){"profile", state.enabled ? "disable" : "enable", state.iccid, NULL},
-              NULL, on_switched);
+    call((char *const[]){"profile", state.enabled ? "disable" : "enable", state.iccid, NULL},
+         NULL, on_switched);
 }
 
 static void on_switched(bool ok, const cJSON *data, const char *error, const char *detail)
@@ -571,7 +619,7 @@ static void on_switched(bool ok, const cJSON *data, const char *error, const cha
 static void reload_switch(lv_timer_t *t)
 {
     reload_timer = NULL;
-    lpac_call(state.current, (char *const[]){"profile", "list", NULL}, NULL, on_switch_list);
+    call((char *const[]){"profile", "list", NULL}, NULL, on_switch_list);
 }
 
 static void cancel_reload(void)
@@ -587,26 +635,34 @@ static void on_refreshed(bool ok, const cJSON *data, const char *error, const ch
     if (!ok)
         toast("%s", L("SIM 刷新失败", "SIM refresh failed"));
     /* The SIM answers nothing useful while it initializes. */
-    state.reloads = 1;
+    state.reloads = 5;
     reload_timer = lv_timer_create(reload_switch, RETRY_MS, NULL);
     lv_timer_set_repeat_count(reload_timer, 1);
 }
 
 static void on_switch_list(bool ok, const cJSON *data, const char *error, const char *detail)
 {
-    if (!ok) {
-        if (state.reloads) {
-            state.reloads = 0;
-            reload_timer = lv_timer_create(reload_switch, RETRY_MS, NULL);
-            lv_timer_set_repeat_count(reload_timer, 1);
-            return;
-        }
-        toast_failure(error, detail);
-        state.view = V_ROOT;
-        render();
+    bool changed = false;
+    const cJSON *profile;
+    if (ok)
+        cJSON_ArrayForEach(profile, data)
+            if (jstr_is(profile, "iccid", state.iccid)) {
+                changed = jstr_is(profile, "profileState", state.enabled ? "disabled" : "enabled");
+                break;
+            }
+    if (!changed && state.reloads) {
+        state.reloads--;
+        reload_timer = lv_timer_create(reload_switch, RETRY_MS, NULL);
+        lv_timer_set_repeat_count(reload_timer, 1);
         return;
     }
-    save_json(&state.slots[state.current].profiles, data);
+    if (!ok)
+        toast_failure(error, detail);
+    else {
+        save_json(&state.slots[state.current].profiles, data);
+        if (!changed)
+            toast("%s", L("配置状态尚未更新，请稍后重试", "Profile state has not updated; try again later"));
+    }
     state.view = V_ROOT;
     render();
 }
@@ -624,8 +680,8 @@ static void on_save(lv_event_t *e)
     state.action = A_RENAME;
     state.view = V_WAIT;
     render();
-    lpac_call(state.current, (char *const[]){"profile", "nickname", state.iccid, state.name, NULL}, NULL,
-              on_changed);
+    call((char *const[]){"profile", "nickname", state.iccid, state.name, NULL}, NULL,
+         on_changed);
 }
 
 static void on_confirm_delete(lv_event_t *e)
@@ -642,7 +698,7 @@ static void on_delete(lv_event_t *e)
     state.action = A_DELETE;
     state.view = V_WAIT;
     render();
-    lpac_call(state.current, (char *const[]){"notification", "list", NULL}, NULL, on_before_change);
+    call((char *const[]){"notification", "list", NULL}, NULL, on_before_change);
 }
 
 static void on_changed(bool ok, const cJSON *data, const char *error, const char *detail)
@@ -656,9 +712,9 @@ static void on_changed(bool ok, const cJSON *data, const char *error, const char
         return;
     }
     if (state.action == A_DELETE)
-        lpac_call(state.current, (char *const[]){"notification", "list", NULL}, NULL, on_auto_list);
+        call((char *const[]){"notification", "list", NULL}, NULL, on_auto_list);
     else
-        lpac_call(state.current, (char *const[]){"profile", "list", NULL}, NULL, on_list);
+        call((char *const[]){"profile", "list", NULL}, NULL, on_list);
 }
 
 static void on_list(bool ok, const cJSON *data, const char *error, const char *detail)
@@ -781,7 +837,7 @@ static void on_downloaded(bool ok, const cJSON *data, const char *error, const c
     toast("%s", L("配置文件已下载", "Profile downloaded"));
     state.view = V_WAIT;
     render();
-    lpac_call(state.current, (char *const[]){"notification", "list", NULL}, NULL, on_auto_list);
+    call((char *const[]){"notification", "list", NULL}, NULL, on_auto_list);
 }
 
 static void download_command(void)
@@ -793,7 +849,7 @@ static void download_command(void)
         argv[n++] = state.confirmation;
     }
     argv[n] = NULL;
-    lpac_call(state.current, argv, on_download_progress, on_downloaded);
+    call(argv, on_download_progress, on_downloaded);
 }
 
 static void on_before_change(bool ok, const cJSON *data, const char *error, const char *detail)
@@ -816,7 +872,7 @@ static void on_before_change(bool ok, const cJSON *data, const char *error, cons
     if (state.action == A_DOWNLOAD)
         download_command();
     else
-        lpac_call(state.current, (char *const[]){"profile", "delete", state.iccid, NULL}, NULL, on_changed);
+        call((char *const[]){"profile", "delete", state.iccid, NULL}, NULL, on_changed);
 }
 
 static void on_start_download(lv_event_t *e)
@@ -832,7 +888,7 @@ static void on_start_download(lv_event_t *e)
     state.downloading = true;
     state.cancelling = false;
     download_dialog();
-    lpac_call(state.current, (char *const[]){"notification", "list", NULL}, NULL, on_before_change);
+    call((char *const[]){"notification", "list", NULL}, NULL, on_before_change);
 }
 
 static void on_notif_list(bool ok, const cJSON *data, const char *error, const char *detail)
@@ -849,7 +905,7 @@ static void on_notifs(lv_event_t *e)
 {
     state.view = V_NOTIF_LOADING;
     render();
-    lpac_call(state.current, (char *const[]){"notification", "list", NULL}, NULL, on_notif_list);
+    call((char *const[]){"notification", "list", NULL}, NULL, on_notif_list);
 }
 
 static void on_notified(bool ok, const cJSON *data, const char *error, const char *detail)
@@ -860,7 +916,7 @@ static void on_notified(bool ok, const cJSON *data, const char *error, const cha
         render();
         return;
     }
-    lpac_call(state.current, (char *const[]){"notification", "list", NULL}, NULL, on_notif_list);
+    call((char *const[]){"notification", "list", NULL}, NULL, on_notif_list);
 }
 
 static void on_process(lv_event_t *e)
@@ -871,7 +927,7 @@ static void on_process(lv_event_t *e)
     state.view = V_WAIT;
     render();
     snprintf(seq, sizeof seq, "%u", state.seq);
-    lpac_call(state.current, (char *const[]){"notification", "process", "-r", seq, NULL}, NULL, on_notified);
+    call((char *const[]){"notification", "process", "-r", seq, NULL}, NULL, on_notified);
 }
 
 static void on_remove(lv_event_t *e)
@@ -882,7 +938,7 @@ static void on_remove(lv_event_t *e)
     state.view = V_WAIT;
     render();
     snprintf(seq, sizeof seq, "%u", state.seq);
-    lpac_call(state.current, (char *const[]){"notification", "remove", seq, NULL}, NULL, on_notified);
+    call((char *const[]){"notification", "remove", seq, NULL}, NULL, on_notified);
 }
 
 static void on_process_all(lv_event_t *e)
@@ -920,15 +976,15 @@ static bool bulk_next(void)
         if (bulk.automatic)
             load();
         else
-            lpac_call(state.current, (char *const[]){"notification", "list", NULL}, NULL, on_notif_list);
+            call((char *const[]){"notification", "list", NULL}, NULL, on_notif_list);
         return false;
     }
     char seq[16];
     snprintf(seq, sizeof seq, "%u", bulk.seqs[bulk.next++]);
     if (bulk.remove)
-        lpac_call(state.current, (char *const[]){"notification", "remove", seq, NULL}, NULL, on_bulk);
+        call((char *const[]){"notification", "remove", seq, NULL}, NULL, on_bulk);
     else
-        lpac_call(state.current, (char *const[]){"notification", "process", "-r", seq, NULL}, NULL, on_bulk);
+        call((char *const[]){"notification", "process", "-r", seq, NULL}, NULL, on_bulk);
     return true;
 }
 
@@ -1014,6 +1070,42 @@ static void on_notification(lv_event_t *e)
     dialog_cancel();
 }
 
+static void chip_ready(void)
+{
+    state.pending += 2;
+    call((char *const[]){"profile", "list", NULL}, NULL, on_loaded);
+    call((char *const[]){"notification", "list", NULL}, NULL, on_notif_count);
+    arrived();
+}
+
+static void on_se_info(bool ok, const cJSON *data, const char *error, const char *detail)
+{
+    struct slot *slot = &state.slots[state.current];
+    if (ok && *jstr_or(data, "eidValue", "") && cJSON_IsObject(jget(data, "EUICCInfo2"))) {
+        if (!slot->ses) {
+            slot->aid = se_aids[state.probe];
+            save_json(&slot->chip, data);
+        }
+        slot->ses |= 1u << state.probe;
+    }
+    if (++state.probe < 2) {
+        lpac_call(state.current, se_aids[state.probe], (char *const[]){"chip", "info", NULL}, NULL, on_se_info);
+        return;
+    }
+    chip_ready();
+}
+
+static void on_vendor(bool ok, const cJSON *data, const char *error, const char *detail)
+{
+    state.slots[state.current].scanned = true;
+    if (!ok) {
+        chip_ready();
+        return;
+    }
+    state.probe = 0;
+    lpac_call(state.current, se_aids[0], (char *const[]){"chip", "info", NULL}, NULL, on_se_info);
+}
+
 static void on_chip(bool ok, const cJSON *data, const char *error, const char *detail)
 {
     struct slot *s = &state.slots[state.current];
@@ -1030,10 +1122,10 @@ static void on_chip(bool ok, const cJSON *data, const char *error, const char *d
     }
     pick = false;
     save_json(&s->chip, data);
-    state.pending += 2;
-    lpac_call(state.current, (char *const[]){"profile", "list", NULL}, NULL, on_loaded);
-    lpac_call(state.current, (char *const[]){"notification", "list", NULL}, NULL, on_notif_count);
-    arrived();
+    if (!s->scanned)
+        lpac_probe_estk(state.current, on_vendor);
+    else
+        chip_ready();
 }
 
 /* The open sequence ends when its last answer arrives, so the root shows the
@@ -1100,7 +1192,7 @@ static void load(void)
     state.pending = 1;
     state.view = V_LOADING;
     render();
-    lpac_call(state.current, (char *const[]){"chip", "info", NULL}, NULL, on_chip);
+    call((char *const[]){"chip", "info", NULL}, NULL, on_chip);
 }
 
 static void on_tab(lv_event_t *e)
@@ -1140,6 +1232,11 @@ void esim_open(void)
         return;
     }
     on_switcher = pick = true;
+    for (int card = 0; card < 2; card++) {
+        state.slots[card].scanned = false;
+        state.slots[card].ses = 0;
+        state.slots[card].aid = NULL;
+    }
     state.current = 0;
     load();
 }
@@ -1149,6 +1246,7 @@ void esim_close(void)
     if (!open_now)
         return;
     open_now = false;
+    restore_se_focus = false;
     keyboard_close();
     install_cancel();
     if (state.view != V_WAIT && !state.downloading) {
@@ -1223,6 +1321,12 @@ bool esim_key(const struct key_event *key)
     switch (key->kind) {
     case KEY_KIND_LEFT:
     case KEY_KIND_RIGHT:
+        if (!on_switcher && ui.se_switcher && input_key_focus(input_group()) == ui.se_switcher) {
+            int index = key->kind == KEY_KIND_RIGHT;
+            if (state.slots[state.current].ses & (1u << index))
+                select_se(index);
+            return true;
+        }
         if (on_switcher && state.current != (key->kind == KEY_KIND_RIGHT)) {
             state.current = key->kind == KEY_KIND_RIGHT;
             load();
@@ -1251,7 +1355,7 @@ bool esim_key(const struct key_event *key)
         focus_entry(end_entry(ui.body, false));
         return true;
     case KEY_KIND_OK:
-        return on_switcher;
+        return on_switcher || (ui.se_switcher && input_key_focus(input_group()) == ui.se_switcher);
     default:
         return false;
     }

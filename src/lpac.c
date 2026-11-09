@@ -33,6 +33,7 @@
 
 struct job {
     int card;
+    char aid[33];
     char **argv;
     lpac_progress_fn progress;
     lpac_done_fn done;
@@ -826,6 +827,10 @@ static bool job_start(void)
         setenv("LPAC_APDU", "at", 1);
         setenv("LPAC_APDU_AT_DEVICE", slave, 1);
         setenv("LPAC_HTTP", "curl", 1);
+        if (*job->aid)
+            setenv("LPAC_CUSTOM_ISD_R_AID", job->aid, 1);
+        else
+            unsetenv("LPAC_CUSTOM_ISD_R_AID");
         tls_shim();
         execv(LPAC, job->argv);
         _exit(127);
@@ -937,7 +942,7 @@ bool lpac_present(void)
     return !access(LPAC, X_OK) && !access(GNUTLS_CURL, R_OK);
 }
 
-void lpac_call(int card, char *const argv[], lpac_progress_fn progress, lpac_done_fn done)
+void lpac_call(int card, const char *aid, char *const argv[], lpac_progress_fn progress, lpac_done_fn done)
 {
     if (run.count == QUEUE) {
         done(false, NULL, "lpac", "The command queue is full");
@@ -963,6 +968,8 @@ void lpac_call(int card, char *const argv[], lpac_progress_fn progress, lpac_don
     }
     struct job *job = &run.q[(run.head + run.count) % QUEUE];
     *job = (struct job){.card = card, .argv = args, .progress = progress, .done = done};
+    if (aid)
+        copy_text(job->aid, sizeof job->aid, aid);
     run.count++;
     job_next();
 }
@@ -1000,6 +1007,31 @@ void lpac_sim_refresh(int card, lpac_done_fn done)
     run.refresh_done = done;
     ticking();
     at_send("+SFUN=5", 20000, on_off);
+}
+
+static void on_estk_opened(const char *reply)
+{
+    char channel[16];
+    if (!has_line(reply, "OK") || !ccho_channel(reply, channel, sizeof channel) || !strcmp(channel, "0")) {
+        run.refresh_ok = false;
+        on_refresh(reply);
+        return;
+    }
+    char command[32];
+    snprintf(command, sizeof command, "+CCHC=%s", channel);
+    at_send(command, 20000, on_refresh);
+}
+
+void lpac_probe_estk(int card, lpac_done_fn done)
+{
+    if (run.dev < 0)
+        run.dev = modem_open();
+    run.card = card;
+    run.refreshing = true;
+    run.refresh_ok = true;
+    run.refresh_done = done;
+    ticking();
+    at_send("+CCHO=\"A06573746B6D65FFFFFFFFFFFF6D6774\"", 20000, on_estk_opened);
 }
 
 void lpac_stop(void)

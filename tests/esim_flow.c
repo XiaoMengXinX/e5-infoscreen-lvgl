@@ -8,6 +8,7 @@ static lv_group_t *group;
 static int stops, cancels;
 static bool accepted;
 static char command[128];
+static const char *command_aid;
 static lpac_done_fn completion;
 int S(int px) { return px; }
 const lv_font_t *F(int px) { return LV_FONT_DEFAULT; }
@@ -30,8 +31,10 @@ void lpac_stop(void) { stops++; }
 void lpac_cancel(void) { cancels++; }
 bool lpac_download_confirm(bool accept) { accepted = accept; return true; }
 void lpac_sim_refresh(int card, lpac_done_fn done) { completion = done; }
-void lpac_call(int card, char *const argv[], lpac_progress_fn progress, lpac_done_fn done)
+void lpac_probe_estk(int card, lpac_done_fn done) { completion = done; }
+void lpac_call(int card, const char *aid, char *const argv[], lpac_progress_fn progress, lpac_done_fn done)
 {
+    command_aid = aid;
     snprintf(command, sizeof command, "%s %s %s %s", argv[0], argv[1], argv[2] ? argv[2] : "", argv[2] && argv[3] ? argv[3] : "");
     completion = done;
 }
@@ -73,6 +76,19 @@ int main(void)
     esim_open();
     assert(open_now && state.current == 1 && reload_timer == pending_reload);
     cancel_reload();
+
+    copy_text(state.iccid, sizeof state.iccid, "12345");
+    state.enabled = false;
+    state.reloads = 2;
+    cJSON *old_state = cJSON_Parse("[{\"iccid\":\"12345\",\"profileState\":\"disabled\"}]");
+    on_switch_list(true, old_state, NULL, "");
+    cJSON_Delete(old_state);
+    assert(state.view == V_WAIT && reload_timer && state.reloads == 1);
+    cancel_reload();
+    cJSON *new_state = cJSON_Parse("[{\"iccid\":\"12345\",\"profileState\":\"enabled\"}]");
+    on_switch_list(true, new_state, NULL, "");
+    cJSON_Delete(new_state);
+    assert(state.view == V_ROOT && !reload_timer);
 
     state.view = V_DOWNLOAD;
     state.action = A_DOWNLOAD;
@@ -124,5 +140,81 @@ int main(void)
     lv_obj_t *body_entry = lv_obj_get_child(ui.body, 0);
     assert(esim_key(&(struct key_event){.kind = KEY_KIND_DOWN}));
     assert(lv_obj_get_child(ui.body, 0) == body_entry);
-    puts("eSIM: background switching, preview, cancellation, automatic notifications and rename passed");
+
+    state.pending = 1;
+    state.view = V_LOADING;
+    on_vendor(true, NULL, NULL, "");
+    assert(command_aid == se_aids[0]);
+    reply("{\"eidValue\":\"SE0-EID\",\"EUICCInfo2\":{}}");
+    assert(command_aid == se_aids[1]);
+    reply("{\"eidValue\":\"SE1-EID\",\"EUICCInfo2\":{}}");
+    assert(state.slots[1].ses == 3 && command_aid == se_aids[0]);
+    assert(jstr_is(state.slots[1].chip, "eidValue", "SE0-EID"));
+    state.view = V_ROOT;
+    render();
+    assert(lv_obj_get_group(ui.se_switcher) == input_group());
+    assert(!lv_obj_get_group(lv_obj_get_child(ui.se_switcher, 0)));
+    assert(!lv_obj_get_group(lv_obj_get_child(ui.se_switcher, 1)));
+    on_switcher = true;
+    assert(esim_key(&(struct key_event){.kind = KEY_KIND_DOWN}));
+    assert(input_key_focus(input_group()) == ui.se_switcher);
+    assert(esim_key(&(struct key_event){.kind = KEY_KIND_RIGHT}));
+    assert(command_aid == se_aids[1] && restore_se_focus);
+    reply("{\"eidValue\":\"SE1-EID\",\"EUICCInfo2\":{}}");
+    on_loaded(true, NULL, NULL, "");
+    on_notif_count(true, NULL, NULL, "");
+    assert(input_key_focus(input_group()) == ui.se_switcher && !restore_se_focus);
+    assert(esim_key(&(struct key_event){.kind = KEY_KIND_LEFT}));
+    assert(command_aid == se_aids[0]);
+    reply("{\"eidValue\":\"SE0-EID\",\"EUICCInfo2\":{}}");
+    on_loaded(true, NULL, NULL, "");
+    on_notif_count(true, NULL, NULL, "");
+    lv_obj_send_event(lv_obj_get_child(ui.se_switcher, 1), LV_EVENT_CLICKED, NULL);
+    assert(command_aid == se_aids[1] && !state.slots[1].profiles && !state.slots[1].notifs);
+    reply("{\"eidValue\":\"SE1-EID\",\"EUICCInfo2\":{}}");
+    state.before = cJSON_Parse("[]");
+    cJSON *new_notification = cJSON_Parse("[{\"seqNumber\":20}]");
+    on_auto_list(true, new_notification, NULL, "");
+    cJSON_Delete(new_notification);
+    assert(!strcmp(command, "notification process -r 20"));
+    assert(command_aid == se_aids[1]);
+    reply("null");
+    on_delete(NULL);
+    assert(command_aid == se_aids[1] && !strncmp(command, "notification list", 17));
+    reply("[]");
+    assert(command_aid == se_aids[1] && !strncmp(command, "profile delete", 14));
+    reply("null");
+    assert(command_aid == se_aids[1] && !strncmp(command, "notification list", 17));
+    reply("[]");
+    assert(command_aid == se_aids[1] && !strncmp(command, "chip info", 9));
+    state.activation = strdup("LPA:1$test.example$test");
+    on_start_download(NULL);
+    assert(command_aid == se_aids[1] && !strncmp(command, "notification list", 17));
+    reply("[]");
+    assert(command_aid == se_aids[1] && !strncmp(command, "profile download", 16));
+    reply("null");
+    assert(command_aid == se_aids[1] && !strncmp(command, "notification list", 17));
+    reply("[]");
+    assert(command_aid == se_aids[1] && !strncmp(command, "chip info", 9));
+
+    state.slots[1].ses = 0;
+    state.slots[1].aid = NULL;
+    state.pending = 1;
+    on_vendor(true, NULL, NULL, "");
+    completion(false, NULL, "euicc_init", "");
+    reply("{\"eidValue\":\"SE1-EID\",\"EUICCInfo2\":{}}");
+    assert(state.slots[1].ses == 2 && command_aid == se_aids[1]);
+    state.slots[1].ses = 0;
+    state.slots[1].aid = NULL;
+    state.pending = 1;
+    on_vendor(true, NULL, NULL, "");
+    completion(false, NULL, "euicc_init", "");
+    completion(false, NULL, "euicc_init", "");
+    assert(!state.slots[1].ses && !command_aid);
+    state.slots[1].ses = 0;
+    state.slots[1].aid = NULL;
+    state.pending = 1;
+    on_vendor(false, NULL, "refresh", "");
+    assert(!state.slots[1].ses && !command_aid);
+    puts("eSIM: background switching, preview, cancellation, notifications, rename and multi-SE routing passed");
 }

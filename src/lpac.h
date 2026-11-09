@@ -13,8 +13,10 @@ typedef void (*lpac_done_fn)(bool ok, const cJSON *data, const char *error, cons
 bool lpac_present(void);
 
 /* Runs one lpac command against the SIM slot (0 or 1), e.g. {"profile", "list",
- * NULL}, queued behind earlier calls. progress may be NULL. */
-void lpac_call(int card, char *const argv[], lpac_progress_fn progress, lpac_done_fn done);
+ * NULL}, queued behind earlier calls. NULL aid selects the standard ISD-R. */
+void lpac_call(int card, const char *aid, char *const argv[], lpac_progress_fn progress, lpac_done_fn done);
+
+void lpac_probe_estk(int card, lpac_done_fn done);
 
 /* Continues the current download after its metadata preview. */
 bool lpac_download_confirm(bool accept);

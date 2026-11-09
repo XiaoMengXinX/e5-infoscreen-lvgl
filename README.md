@@ -22,7 +22,7 @@
 | `src/speedtest.c` | 网速测试：speedtest-go 与全球网测两种后端，按需安装 |
 | `src/install.c` | 安装对话框：脚本的步骤与进度，测速与 eSIM 共用 |
 | `src/lpac.c` | lpac 运行器：伪终端 AT 桥接直连 CP 的空闲命令环，驱动所选卡槽的 eUICC |
-| `src/esim.c` | eSIM 管理：配置文件、下载前确认、自动通知上报、芯片详情 |
+| `src/esim.c` | eSIM 管理：配置文件、下载前确认、自动通知上报、芯片详情、eSTK.me 多 SE 选择 |
 | `src/battery.c` | 电池详情：使用时长、预估续航、电量历史 |
 | `src/record.c` | 录屏：JPEG 编码的 QuickTime 视频 |
 | `src/pages/` | 概览、信号、流量、短信、热点、设备、详细信息、设置、应用 |
