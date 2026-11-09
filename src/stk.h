@@ -19,3 +19,6 @@ void stk_close(void);
 bool stk_key(const struct key_event *key);
 /* False when the view is at its top and Back should leave it. */
 bool stk_back(void);
+
+void stk_suspend_for_modem_restart(void);
+void stk_resume_after_modem_restart(void);

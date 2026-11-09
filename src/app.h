@@ -130,6 +130,7 @@ bool power_menu_key(const struct key_event *key);
 
 /* dialog.c */
 void dialog_open(const char *title, const char *note);
+void dialog_set_closable(bool closable);
 lv_obj_t *dialog_button(const char *text, lv_event_cb_t cb, void *ctx);
 void dialog_cancel(void);
 void dialog_close(void);

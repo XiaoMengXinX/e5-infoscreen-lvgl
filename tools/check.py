@@ -3,12 +3,14 @@
 import runpy
 import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 build = runpy.run_path(str(ROOT / 'build.py'))
 if not (ROOT / 'out/build/liblvgl.a').is_file():
     raise SystemExit('Run python3 build.py first')
+subprocess.run([sys.executable, str(ROOT / 'tests/modem_restart.py')], check=True)
 lvgl = '/out/deps/' + build['SOURCES']['lvgl'][3]
 cjson = '/out/deps/' + build['SOURCES']['cjson'][3]
 flags = ['cc', '-O2', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',

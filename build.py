@@ -58,6 +58,11 @@ def platform_errors():
     return '\n'.join(lines)
 
 
+def embedded_scripts():
+    script = (HERE / 'src/modem_restart.py').read_text(encoding='utf-8')
+    return 'static const char MODEM_RESTART_SCRIPT[] =\n    ' + json.dumps(script) + ';\n'
+
+
 def image():
     tag = 'e5-infoscreen-lvgl-build:' + hashlib.sha256(DOCKERFILE.encode()).hexdigest()[:12]
     if subprocess.run(['docker', 'image', 'inspect', tag], capture_output=True).returncode:
@@ -70,10 +75,14 @@ def build():
     archives = {name: fetch(name) for name in SOURCES}
     gen = OUT / 'gen'
     gen.mkdir(parents=True, exist_ok=True)
-    header = gen / 'platform_errors.h'
-    content = platform_errors()
-    if not header.exists() or header.read_text(encoding='utf-8') != content:
-        header.write_text(content, encoding='utf-8')
+    generated = {
+        'platform_errors.h': platform_errors(),
+        'modem_restart_script.h': embedded_scripts(),
+    }
+    for name, content in generated.items():
+        header = gen / name
+        if not header.exists() or header.read_text(encoding='utf-8') != content:
+            header.write_text(content, encoding='utf-8')
     script = ' && '.join([
         'mkdir -p /out/deps /out/build',
         *[f'([ -d /out/deps/{SOURCES[n][3]} ] || tar -xzf /cache/{archives[n].name} -C /out/deps)' for n in SOURCES],

@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -100,6 +101,7 @@ static bool on_switcher;
 
 static int current;
 static bool open_now, enabled = true;
+static bool modem_restart;
 /* The card whose command the popup shows, or -1. */
 static int popup = -1;
 static int ring_dst = -1, ring_ch = -1;
@@ -1218,6 +1220,8 @@ static bool present(int c);
  * runs, as Android's RIL tells it at boot: each card present, once per run. */
 static void tick(lv_timer_t *t)
 {
+    if (modem_restart)
+        return;
     at_poll();
     trace_poll();
     for (int c = 0; c < 2 && enabled; c++) {
@@ -1702,4 +1706,39 @@ bool stk_back(void)
         return false;
     render();
     return true;
+}
+
+void stk_suspend_for_modem_restart(void)
+{
+    modem_restart = true;
+    if (ticker)
+        lv_timer_set_period(ticker, 250);
+    if (at.pid >= 0) {
+        kill(at.pid, SIGKILL);
+        while (waitpid(at.pid, NULL, 0) < 0 && errno == EINTR) {
+        }
+        close(at.fd);
+        at.pid = -1;
+        at.fd = -1;
+    }
+    at.head = at.count = 0;
+    for (int c = 0; c < 2; c++) {
+        char path[32];
+        popup_close(c);
+        cards[c].pending = false;
+        cards[c].recovering = false;
+        cards[c].registered = false;
+        session_path(c, path, sizeof path);
+        unlink(path);
+    }
+    trace_close();
+}
+
+void stk_resume_after_modem_restart(void)
+{
+    modem_restart = false;
+    if (enabled && !awaiting_restart())
+        trace_open();
+    if (open_now)
+        render();
 }

@@ -9,6 +9,7 @@
 #include "api.h"
 #include "app.h"
 #include "keyboard.h"
+#include "modem_restart.h"
 #include "stk.h"
 #include "theme.h"
 #include "ui.h"
@@ -75,7 +76,7 @@ static const struct {
     {"touch", "touch"}, {"lang", "globe"}, {"volume", "volume"}, {"call_volume", "phone"}, {"vibrate", "bell"},
     {"sim_card", "simcard"}, {"apn", "globe"}, {"net_mode", "signal"}, {"nr_mode", "signal"},
     {"lte_bands", "signal"}, {"nr_bands", "signal"}, {"cell_lock", "lock"}, {"bands_default", "refresh"},
-    {"reconnect", "refresh"}, {"start", "battery"}, {"stop", "battery"}, {"full_once", "battery"},
+    {"reconnect", "refresh"}, {"modem_restart", "refresh"}, {"start", "battery"}, {"stop", "battery"}, {"full_once", "battery"},
     {"state", "info"}, {"timezone", "globe"}, {"clock_seconds", "clock"}, {"version", "info"}, {"built", "clock"},
     {"screen_version", "info"}, {"update_check", "refresh"}, {"update_apply", "download"},
     {"update_rollback", "refresh"}, {"traffic_clear", "trash"}, {"clear_0", "trash"}, {"clear_1", "trash"},
@@ -117,6 +118,16 @@ static struct view *find(unsigned serial)
         if (stack[i].serial == serial)
             return &stack[i];
     return NULL;
+}
+
+static void load_cat(struct view *v);
+static unsigned modem_restart_serial;
+
+static void modem_restarted(void)
+{
+    struct view *v = find(modem_restart_serial);
+    if (v && v->kind == V_CAT)
+        load_cat(v);
 }
 
 static void *tag(struct view *v)
@@ -373,6 +384,10 @@ static int item_index(const cJSON *items, const char *id)
 /* The data roaming policy per SIM, as the dialing script reads it; setting it
  * goes through the device's own helper, which tells network recovery. */
 #define ROAMING "/usr/libexec/unisoc-modem/roaming"
+#define MODEM_HELPER "/usr/sbin/e5-modemd"
+#define MODEM_AT "/usr/libexec/unisoc-modem/at"
+#define MODEM_LOCK "/usr/libexec/unisoc-modem/lock"
+#define PYTHON3 "/usr/bin/python3"
 
 static bool roaming_allowed(int slot)
 {
@@ -392,27 +407,37 @@ static void add_local_items(cJSON *items, const char *cat)
         if (at < cJSON_GetArraySize(items))
             at++;
         cJSON_InsertItemInArray(items, at, keys);
-    } else if (!strcmp(cat, "network") && !access(ROAMING, X_OK)) {
-        /* For the card the category controls, as its other per-SIM items are:
-         * the one picked, or the data SIM when it follows that. */
-        const char *control = jstr(cJSON_GetArrayItem(items, item_index(items, "control_slot")), "value");
-        int slot = control && (!strcmp(control, "0") || !strcmp(control, "1"))
-                       ? *control - '0'
-                       : (int)jnum_or(app.status, "modem.sim_card", 0);
-        char zh[64], en[64];
-        snprintf(zh, sizeof zh, "允许 SIM %d 在漫游时上网，可能产生额外费用", slot + 1);
-        snprintf(en, sizeof en, "SIM %d uses mobile data while roaming; charges may apply", slot + 1);
-        cJSON *roaming = local_item("roaming", "toggle", "数据漫游", "Data roaming", zh, en);
-        cJSON_AddBoolToObject(roaming, "value", roaming_allowed(slot));
-        cJSON_AddNumberToObject(roaming, "slot", slot);
-        cJSON_InsertItemInArray(items, item_index(items, "sim_radio0"), roaming);
-        cJSON *stk = local_item("stk", "category", "SIM 卡应用", "SIM toolkit", "SIM 卡自带的 STK 菜单",
-                                "The SIMs' own STK menus");
-        cJSON_AddStringToObject(stk, "category", STK_CATEGORY);
-        int at = item_index(items, "sim_card");
-        if (at < cJSON_GetArraySize(items))
-            at++;
-        cJSON_InsertItemInArray(items, at, stk);
+    } else if (!strcmp(cat, "network")) {
+        if (!access(ROAMING, X_OK)) {
+            /* For the card the category controls, as its other per-SIM items are:
+             * the one picked, or the data SIM when it follows that. */
+            const char *control = jstr(cJSON_GetArrayItem(items, item_index(items, "control_slot")), "value");
+            int slot = control && (!strcmp(control, "0") || !strcmp(control, "1"))
+                           ? *control - '0'
+                           : (int)jnum_or(app.status, "modem.sim_card", 0);
+            char zh[64], en[64];
+            snprintf(zh, sizeof zh, "允许 SIM %d 在漫游时上网，可能产生额外费用", slot + 1);
+            snprintf(en, sizeof en, "SIM %d uses mobile data while roaming; charges may apply", slot + 1);
+            cJSON *roaming = local_item("roaming", "toggle", "数据漫游", "Data roaming", zh, en);
+            cJSON_AddBoolToObject(roaming, "value", roaming_allowed(slot));
+            cJSON_AddNumberToObject(roaming, "slot", slot);
+            cJSON_InsertItemInArray(items, item_index(items, "sim_radio0"), roaming);
+            cJSON *stk = local_item("stk", "category", "SIM 卡应用", "SIM toolkit", "SIM 卡自带的 STK 菜单",
+                                    "The SIMs' own STK menus");
+            cJSON_AddStringToObject(stk, "category", STK_CATEGORY);
+            int at = item_index(items, "sim_card");
+            if (at < cJSON_GetArraySize(items))
+                at++;
+            cJSON_InsertItemInArray(items, at, stk);
+        }
+        if (!access(MODEM_HELPER, X_OK) && !access(MODEM_AT, X_OK) &&
+            !access(MODEM_LOCK, X_OK) && !access(PYTHON3, X_OK)) {
+            cJSON *restart = local_item("modem_restart", "action", "重启基带", "Restart baseband",
+                                        "暂时中断所有 SIM 的通话和网络，完成后恢复射频和数据连接设置",
+                                        "Pauses calls and mobile service on all SIMs, then restores radio and data settings");
+            cJSON_AddBoolToObject(restart, "confirm", true);
+            cJSON_AddItemToArray(items, restart);
+        }
     } else if (!strcmp(cat, STK_CATEGORY)) {
         cJSON *on = local_item("stk_enabled", "toggle", "SIM 卡应用（STK）", "SIM toolkit (STK)",
                                "显示 SIM 卡自带的 STK 菜单，以及 SIM 卡主动发来的提示",
@@ -519,6 +544,12 @@ static void local_save(const cJSON *it, const cJSON *value)
     }
     if (!strcmp(id, "touch_reset") && !touch_rebind()) {
         toast("%s", L("重置触摸失败", "Touch reset failed"));
+        return;
+    }
+    if (!strcmp(id, "modem_restart")) {
+        struct view *v = top();
+        modem_restart_serial = v ? v->serial : 0;
+        modem_restart_run(modem_restarted);
         return;
     }
     toast("%s", L("执行中…", "Running…"));

@@ -6,6 +6,7 @@
 static lv_obj_t *root, *sheet;
 static lv_group_t *group, *previous_group;
 static void (*closed)(void);
+static bool closable;
 
 bool dialog_is_open(void)
 {
@@ -40,13 +41,19 @@ void dialog_on_close(void (*cb)(void))
 
 static void on_backdrop(lv_event_t *e)
 {
-    if (lv_event_get_target_obj(e) == root)
+    if (closable && lv_event_get_target_obj(e) == root)
         dialog_close();
+}
+
+void dialog_set_closable(bool allow)
+{
+    closable = allow;
 }
 
 void dialog_open(const char *title, const char *note)
 {
     dialog_close();
+    closable = true;
     previous_group = input_group();
     group = lv_group_create();
     input_set_group(group);
@@ -108,7 +115,8 @@ bool dialog_key(const struct key_event *key)
         return false;
     switch (key->kind) {
     case KEY_KIND_BACK:
-        dialog_close();
+        if (closable)
+            dialog_close();
         break;
     case KEY_KIND_OK:
         if (!key->repeat)
