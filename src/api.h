@@ -12,9 +12,7 @@ typedef void (*api_event_cb)(cJSON *event);
 
 void api_init(void);
 int api_fd(void);
-/* With hold, replies other than call events wait for a call without it. */
-void api_dispatch(bool hold);
-bool api_held(void);
+void api_dispatch(void);
 
 void api_get(const char *path, api_cb cb, void *ctx);
 void api_get_text(const char *path, api_text_cb cb, void *ctx);

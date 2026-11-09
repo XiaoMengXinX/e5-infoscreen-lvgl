@@ -220,9 +220,6 @@ int api_fd(void)
     return q.wake[0];
 }
 
-/* Replies held back while the screen is in motion, in arrival order. */
-static struct request *held, **held_tail = &held;
-
 static void deliver(struct request *r)
 {
     if (r->event_cb)
@@ -238,12 +235,7 @@ static void deliver(struct request *r)
     free(r);
 }
 
-bool api_held(void)
-{
-    return held;
-}
-
-void api_dispatch(bool hold)
+void api_dispatch(void)
 {
     char drain[64];
     while (read(q.wake[0], drain, sizeof drain) > 0) {
@@ -253,22 +245,10 @@ void api_dispatch(bool hold)
     q.done = NULL;
     q.done_tail = &q.done;
     pthread_mutex_unlock(&q.lock);
-    if (!hold && held) {
-        *held_tail = list;
-        list = held;
-        held = NULL;
-        held_tail = &held;
-    }
     while (list) {
         struct request *r = list;
         list = r->next;
-        if (hold && !r->event_cb) {
-            r->next = NULL;
-            *held_tail = r;
-            held_tail = &r->next;
-        } else {
-            deliver(r);
-        }
+        deliver(r);
     }
 }
 

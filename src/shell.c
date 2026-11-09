@@ -1624,20 +1624,6 @@ void shell_swipe(bool pressed, lv_point_t p, double time)
     }
 }
 
-bool shell_sliding(void)
-{
-    if (lock_moving() || lv_obj_is_scrolling(ui.pages[app.page]))
-        return true;
-    if (swipe_dragging())
-        return swipe_speed(now_ms()) != 0;
-    /* A late frame in a slide's last stretch does not show. */
-    for (int i = 0; i < PAGE_COUNT; i++) {
-        lv_anim_t *a = lv_anim_get(ui.pages[i], slide_x);
-        if (a && a->act_time < (int32_t)(a->duration * 3 / 5))
-            return true;
-    }
-    return false;
-}
 
 /* ---------- construction ---------- */
 

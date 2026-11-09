@@ -88,8 +88,6 @@ void shell_touch_press(void);
 bool shell_touch_allowed(void);
 /* time is when the panel sampled the point, in monotonic ms. */
 void shell_swipe(bool pressed, lv_point_t point, double time);
-/* True while a page slides fast, its content scrolls or the lock moves: a late frame would show. */
-bool shell_sliding(void);
 void shell_poll_now(void);
 void shell_screen_changed(void);
 void toast(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -109,7 +107,6 @@ void shell_wallpaper_locked(bool locked);
 void lock_create(void);
 void lock_engage(void);
 bool lock_active(void);
-bool lock_moving(void);
 bool lock_touch_blocked(void);
 void lock_status(const cJSON *st);
 void lock_clock(void);

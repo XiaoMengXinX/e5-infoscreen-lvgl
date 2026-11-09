@@ -45,19 +45,14 @@ int main(int argc, char **argv)
         uint32_t wait = lv_timer_handler();
         int n = input_poll_fds(fds);
         fds[n] = (struct pollfd){.fd = api_fd(), .events = POLLIN};
-        /* Held replies are retried every 20 ms: a finger coming to rest raises no event. */
-        int timeout = wait == LV_NO_TIMER_READY ? -1 : (int)wait;
-        if (api_held())
-            timeout = !shell_sliding() ? 0 : timeout < 0 || timeout > 20 ? 20 : timeout;
-        int ready = poll(fds, (nfds_t)n + 1, timeout);
+        int ready = poll(fds, (nfds_t)n + 1, wait == LV_NO_TIMER_READY ? -1 : (int)wait);
         if (dump_requested) {
             dump_requested = 0;
             drm_display_save("/tmp/screen.png");
         }
         if (ready > 0)
             input_dispatch(fds, n);
-        /* Filling a page drops frames, so its replies wait while it moves fast. */
-        if ((ready > 0 && fds[n].revents & POLLIN) || api_held())
-            api_dispatch(shell_sliding());
+        if (fds[n].revents & POLLIN)
+            api_dispatch();
     }
 }

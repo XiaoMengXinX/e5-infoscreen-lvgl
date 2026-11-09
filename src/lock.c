@@ -198,10 +198,6 @@ static void anim_y(void *obj, int32_t v)
     place(v, drag_opa(v));
 }
 
-bool lock_moving(void)
-{
-    return still.lock != NULL;
-}
 
 static struct {
     int32_t from, to;
