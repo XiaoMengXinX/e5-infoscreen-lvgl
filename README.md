@@ -1,7 +1,7 @@
 # 信息屏 LVGL 界面
 
 [e5-linux](https://github.com/sprd-linux-devs/e5-linux) 中 `devices/common/infoscreen/` 屏幕界面的原生实现：基于 LVGL 9.6 的单个静态程序，
-通过 DRM（`/dev/dri/card0`，双缓冲、vblank 翻页）显示，从 evdev 读取触摸和按键，用 FreeType 渲染 Noto Sans CJK SC。
+通过 DRM（`/dev/dri/card0`，普通内存绘制、vblank 翻页）显示，从 evdev 读取触摸和按键，用 FreeType 渲染 Noto Sans CJK SC。
 
 数据和操作来自 `api.uc`（`127.0.0.1:8088/api`）及来电事件流（`127.0.0.1:8089/events`），
 设置项由 `/api/settings` 描述，与网页端共用同一后端和 `/etc/config/e5-infoscreen`。
@@ -11,7 +11,7 @@
 | 路径 | 内容 |
 | --- | --- |
 | `src/main.c` | 初始化、主循环（poll 输入与 HTTP 完成队列） |
-| `src/drm.c` | DRM 显示：dumb buffer 双缓冲与翻页 |
+| `src/drm.c` | DRM 显示：缓冲区、翻页事件和刷新周期 |
 | `src/input.c` | evdev 触摸与按键：触摸跟手、滑动速度预测 |
 | `src/api.c` | 本机 HTTP 客户端与 ubus 调用（工作线程）、来电事件流及其轮询后备 |
 | `src/shell.c` | 状态栏、工具栏、底部导航、全部页面、状态轮询、背光与息屏、按键、通知、提示 |
@@ -45,6 +45,8 @@ python3 build.py
 在 `alpine:3.22`（linux/arm64）容器中静态链接 musl、FreeType 和 libpng，
 输出 `out/e5-infoscreen-ui`。LVGL 与 cJSON 的源码包按 `build.py`
 中的 SHA-256 校验后缓存在 `out/cache/`。
+
+回归检查运行 `python3 tools/check.py`，覆盖翻页事件、慢帧调度和动画时间步，见 [tests/README.md](tests/README.md)。
 
 ## 安装
 
