@@ -41,6 +41,8 @@ void ui_meter_set(struct ui_meter *meter, const char *text, int percent, lv_colo
 void ui_focusable(lv_obj_t *obj);
 /* Fills a ui_button with the accent color as the main action. */
 void ui_primary(lv_obj_t *button);
+/* Fills a ui_button with the danger color as the destructive action. */
+void ui_danger(lv_obj_t *button);
 
 /* The gap between the blocks of a list or a nested view, tighter when compact. */
 int ui_stack_gap(void);

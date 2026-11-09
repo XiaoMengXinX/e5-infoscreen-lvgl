@@ -97,10 +97,10 @@ static void focus_style(lv_obj_t *obj)
     lv_obj_set_style_outline_pad(obj, -2, LV_STATE_FOCUS_KEY);
 }
 
-void ui_primary(lv_obj_t *button)
+static void fill_button(lv_obj_t *button, lv_color_t bg, lv_color_t fg)
 {
-    lv_obj_set_style_bg_color(button, theme.accent, 0);
-    lv_obj_set_style_text_color(lv_obj_get_child(button, 0), theme.bg, 0);
+    lv_obj_set_style_bg_color(button, bg, 0);
+    lv_obj_set_style_text_color(lv_obj_get_child(button, 0), fg, 0);
     /* Key focus keeps the usual ring on the edge, in the text color, with a dark gap so it
      * reads against the fill; the padding gives up what the gap border takes, so the button
      * keeps its size. */
@@ -110,6 +110,16 @@ void ui_primary(lv_obj_t *button)
     lv_obj_set_style_border_width(button, gap, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_pad_ver(button, S(10) - gap, LV_STATE_FOCUS_KEY);
     lv_obj_set_style_pad_hor(button, S(12) - gap, LV_STATE_FOCUS_KEY);
+}
+
+void ui_primary(lv_obj_t *button)
+{
+    fill_button(button, theme.accent, theme.bg);
+}
+
+void ui_danger(lv_obj_t *button)
+{
+    fill_button(button, theme.danger, theme.text);
 }
 
 void ui_focusable(lv_obj_t *obj)
