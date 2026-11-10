@@ -15,6 +15,7 @@
 #include "ui.h"
 #include "util.h"
 #include "wallpaper.h"
+#include "volkeys.h"
 
 #define POLL_AWAKE_MS 2000
 #define POLL_BLANK_MS 5000
@@ -80,7 +81,7 @@ static uint32_t last_back;
 static uint32_t last_step, last_focus;
 static bool volume_busy;
 static int volume_held;
-static bool volume_repeating;
+static bool volume_repeating, brightness_dirty;
 #define SCREENSHOT_PATH "/tmp/screen.png"
 static lv_timer_t *volume_timer, *chord_timer;
 /* Both volume keys are down and the hold has not yet become a recording prompt. */
@@ -290,16 +291,17 @@ static void volume_done(int status, cJSON *r, void *ctx)
     lv_timer_resume(osd_timer);
 }
 
-static void volume_step(int step);
+static void volume_step(int step, bool repeat);
+static void backlight_send(int level);
 
 /* A held volume key keeps stepping, without queueing requests behind a slow one.
  * The first step waits briefly so that pressing both keys together only takes a screenshot. */
 static void volume_repeat(lv_timer_t *t)
 {
     lv_timer_set_period(t, volume_repeating ? 150 : 400);
-    volume_repeating = true;
     if (volume_held)
-        volume_step(volume_held);
+        volume_step(volume_held, volume_repeating);
+    volume_repeating = true;
 }
 
 static void screenshot(void)
@@ -327,14 +329,63 @@ void shell_record_indicator(int seconds)
         ui_set_fmt(ui.bar_rec, "● %d:%02d", seconds / 60, seconds % 60);
 }
 
-static void volume_step(int step)
+static void volume_step(int step, bool repeat)
 {
-    if (volume_busy)
+    switch (volkeys_action(step, repeat, app.blank, phone_call_active(), app.brightness)) {
+    case VOLKEYS_NONE:
         return;
-    volume_busy = true;
-    cJSON *body = cJSON_CreateObject();
-    cJSON_AddNumberToObject(body, "step", step);
-    api_post("/volume", body, volume_done, NULL);
+    case VOLKEYS_TOGGLE:
+        screen_set_blank(!app.blank);
+        return;
+    case VOLKEYS_WAKE:
+        screen_set_blank(false);
+        return;
+    case VOLKEYS_CUT:
+        lv_timer_pause(power_key.timer);
+        volkeys_set_cut(true);
+        screen_set_blank(true);
+        return;
+    case VOLKEYS_RESTORE:
+        volkeys_set_cut(false);
+        screen_set_blank(false);
+        lock_dismiss();
+        return;
+    case VOLKEYS_ADJUST: {
+        int level = volkeys_brightness(app.brightness, step);
+        if (level != app.brightness) {
+            app.brightness = level;
+            brightness_dirty = true;
+            backlight_send(level);
+        }
+        idle_reset();
+        ui_set_text(ui.osd_label, L("亮度", "Brightness"));
+        int percent = (app.brightness * 100 + 127) / 255;
+        ui_set_fmt(ui.osd_value, "%d%%", percent);
+        lv_bar_set_value(ui.osd_bar, percent, LV_ANIM_OFF);
+        lv_obj_set_hidden(ui.osd, false);
+        lv_timer_reset(osd_timer);
+        lv_timer_resume(osd_timer);
+        return;
+    }
+    case VOLKEYS_AUDIO:
+        if (!volume_busy) {
+            volume_busy = true;
+            cJSON *body = cJSON_CreateObject();
+            cJSON_AddNumberToObject(body, "step", step);
+            api_post("/volume", body, volume_done, NULL);
+        }
+        return;
+    }
+}
+
+static void brightness_save(void)
+{
+    if (!brightness_dirty)
+        return;
+    brightness_dirty = false;
+    char value[16];
+    snprintf(value, sizeof value, "%d", app.brightness);
+    screen_option_set("brightness", value);
 }
 
 /* ---------- backlight, idle ---------- */
@@ -399,7 +450,7 @@ static void sync_drawing(void)
 
 void screen_set_blank(bool blank)
 {
-    if (blank == app.blank)
+    if (blank == app.blank || (!blank && volkeys_cut_active()))
         return;
     app.blank = blank;
     blank_changed_at = lv_tick_get();
@@ -1044,6 +1095,11 @@ static void notifications(const cJSON *list)
 static void reconcile_power(const cJSON *st)
 {
     const cJSON *awake = jget(st, "screen.awake");
+    if (volkeys_cut_active()) {
+        if (cJSON_IsTrue(awake))
+            backlight_send(0);
+        return;
+    }
     if (cJSON_IsBool(awake) && cJSON_IsTrue(awake) == app.blank && lv_tick_elaps(blank_changed_at) > 1000) {
         app.blank = !cJSON_IsTrue(awake);
         sync_drawing();
@@ -1272,12 +1328,15 @@ static bool field_focused(void)
 
 void shell_key(const struct key_event *key)
 {
+    if (volkeys_cut_active() && key->kind != KEY_KIND_VOLUP && key->kind != KEY_KIND_VOLDOWN)
+        return;
     lock_key_held(key);
     if (key->kind == KEY_KIND_VOLUP || key->kind == KEY_KIND_VOLDOWN) {
         int step = key->kind == KEY_KIND_VOLUP ? 1 : -1;
         /* Both keys together: a press takes a screenshot, a hold offers screen
          * recording, and during a recording either one stops it. */
         if (key->down && !key->repeat) {
+            volkeys_refresh();
             if (volume_held == -step) {
                 volume_held = 0;
                 lv_timer_pause(volume_timer);
@@ -1300,9 +1359,13 @@ void shell_key(const struct key_event *key)
             lv_timer_pause(chord_timer);
             screenshot();
         } else if (!key->down && volume_held == step) {
+            if (!volume_repeating)
+                volume_step(step, false);
             volume_held = 0;
             lv_timer_pause(volume_timer);
         }
+        if (!key->down)
+            brightness_save();
         return;
     }
     if (key->kind == KEY_KIND_POWER) {
@@ -2051,6 +2114,7 @@ void shell_rebuild(void)
 
 void shell_init(void)
 {
+    volkeys_init();
     memcpy(nav_slots, nav_defaults, sizeof nav_slots);
     theme_apply(NULL);
     poll_timer = lv_timer_create(poll_fire, 1, NULL);

@@ -15,3 +15,5 @@ APDU interface coverage checks saved CSIM/CCHO selection, keyboard selection, pe
 The baseband restart test checks the kernel CP stop/start sequence, lock exclusion, single/dual-SIM presence, data connection restoration, CP failure cleanup and returned WAN availability.
 
 Backend selection coverage checks installed driver capabilities, disabled choices, saved selection, forced stdio routing, and interface-key focus.
+
+The volume-key test covers the original plugin configuration, defaults, cached reads and external edits, call priority, hold behavior, and minimum-brightness cut/wake behavior.

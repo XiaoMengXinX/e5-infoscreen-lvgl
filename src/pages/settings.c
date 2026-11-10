@@ -14,6 +14,7 @@
 #include "theme.h"
 #include "ui.h"
 #include "util.h"
+#include "volkeys.h"
 
 #define DEPTH 8
 #define ROWS 96
@@ -66,6 +67,7 @@ static const struct {
     const char *id, *icon;
 } icons[] = {
     {"network", "signal"}, {"at", "terminal"}, {"devices", "device"}, {"appmgr", "apps"}, {"bluetooth", "bluetooth"},
+    {"volkeys", "settings"}, {"volkeys_mode", "settings"}, {"volkeys_step", "sun"}, {"volkeys_off_at_min", "power"},
     {"charge", "battery"}, {"notify", "bell"}, {"sound", "volume"}, {"screen", "device"}, {"ui", "palette"},
     {"navigation", "navigation"}, {"usb", "usb"}, {"system", "chip"}, {"about", "info"}, {"cpu", "chip"},
     {"cpu_thermal", "sun"}, {"persist", "power"}, {"current", "chip"}, {"voltage", "battery"},
@@ -399,7 +401,46 @@ static bool roaming_allowed(int slot)
 
 static void add_local_items(cJSON *items, const char *cat)
 {
-    if (!strcmp(cat, "ui")) {
+    if (!strcmp(cat, "volkeys")) {
+        volkeys_refresh();
+        const struct volkeys_config *config = volkeys_config();
+        cJSON *mode = local_item("volkeys_mode", "choice", "音量键功能", "Volume key action",
+                                "通话中调节通话音量；双键短按截图，长按录屏",
+                                "Adjusts call volume during calls; press both keys for a screenshot, hold to record");
+        cJSON_AddStringToObject(mode, "value", volkeys_mode_name(config->mode));
+        cJSON *options = cJSON_AddArrayToObject(mode, "options");
+        const char *zh[] = {"调节屏幕亮度", "亮屏 / 熄屏", "调节音量"};
+        const char *en[] = {"Screen brightness", "Screen on / off", "Volume"};
+        for (int i = 0; i < 3; i++) {
+            cJSON *option = cJSON_CreateObject();
+            cJSON_AddStringToObject(option, "value", volkeys_mode_name((enum volkeys_mode)i));
+            cJSON *label = cJSON_AddObjectToObject(option, "label");
+            cJSON_AddStringToObject(label, "zh", zh[i]);
+            cJSON_AddStringToObject(label, "en", en[i]);
+            cJSON_AddItemToArray(options, option);
+        }
+        cJSON_AddItemToArray(items, mode);
+        cJSON *step = local_item("volkeys_step", "number", "每次亮度变化", "Brightness per press", "", "");
+        cJSON_AddNumberToObject(step, "value", config->step);
+        cJSON_AddNumberToObject(step, "min", 5);
+        cJSON_AddNumberToObject(step, "max", 25);
+        cJSON_AddNumberToObject(step, "step", 5);
+        cJSON_AddStringToObject(step, "unit", "%");
+        cJSON_AddItemToArray(items, step);
+        cJSON *off = local_item("volkeys_off_at_min", "toggle", "最低亮度关屏",
+                               "Screen off at minimum",
+                               "最低亮度下再按一次音量-关屏，按音量+恢复",
+                               "A separate volume − press turns the screen off; only volume + restores it");
+        cJSON_AddBoolToObject(off, "value", config->off_at_min);
+        cJSON_AddItemToArray(items, off);
+    } else if (!strcmp(cat, "sound")) {
+        cJSON *item;
+        cJSON_ArrayForEach(item, items)
+            if (jstr_is(item, "id", "volume") || jstr_is(item, "id", "call_volume"))
+                cJSON_DeleteItemFromObject(item, "note");
+        cJSON *keys = local_item("volkeys", "category", "音量键功能", "Volume keys", "", "");
+        cJSON_AddItemToArray(items, keys);
+    } else if (!strcmp(cat, "ui")) {
         cJSON *keys = local_item("lock_keys", "toggle", "长按 * 和 # 解锁", "Hold * and # to unlock",
                                  "只按这两个键，按住约 1 秒", "These two keys alone, for about a second");
         cJSON_AddBoolToObject(keys, "value", lock_keys_enabled());
@@ -497,6 +538,25 @@ static bool touch_rebind(void)
 static void local_save(const cJSON *it, const cJSON *value)
 {
     const char *id = jstr(it, "id");
+    if (!strncmp(id, "volkeys_", 8)) {
+        char text[32];
+        if (cJSON_IsBool(value))
+            snprintf(text, sizeof text, "%d", cJSON_IsTrue(value));
+        else if (cJSON_IsNumber(value))
+            snprintf(text, sizeof text, "%g", value->valuedouble);
+        else
+            snprintf(text, sizeof text, "%s", cJSON_IsString(value) ? value->valuestring : "");
+        if (!volkeys_save(id + 8, text)) {
+            toast("%s", L("保存失败", "Could not save"));
+            return;
+        }
+        cJSON_ReplaceItemInObject((cJSON *)it, "value", cJSON_Duplicate(value, true));
+        if (top()->kind == V_EDIT)
+            pop();
+        toast("%s", L("已保存", "Saved"));
+        render();
+        return;
+    }
     if (!strcmp(id, "lock_keys")) {
         bool on = cJSON_IsTrue(value);
         screen_option_set("lock_keys", on ? "1" : "0");
@@ -593,7 +653,7 @@ static void load(struct view *v, const char *path)
 
 static void load_cat(struct view *v)
 {
-    if (!strcmp(v->cat, STK_CATEGORY)) {
+    if (!strcmp(v->cat, STK_CATEGORY) || !strcmp(v->cat, "volkeys")) {
         cJSON_Delete(v->data);
         v->data = cJSON_CreateArray();
         add_local_items(v->data, v->cat);
@@ -1616,7 +1676,7 @@ static void item_clicked(struct view *v, const char *id, const char *key)
         return;
     }
     if (!strcmp(type, "category")) {
-        const cJSON *c = category(jstr_or(it, "category", ""));
+        const cJSON *c = !strcmp(id, "volkeys") ? it : category(jstr_or(it, "category", ""));
         if (c)
             open_category(c);
     } else if (!strcmp(type, "toggle")) {

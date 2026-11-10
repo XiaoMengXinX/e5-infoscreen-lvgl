@@ -18,7 +18,7 @@ flags = ['cc', '-O2', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-
          '-DLV_CONF_INCLUDE_SIMPLE', '-I/out/gen', '-I/src', '-I/src/src', '-I' + lvgl, '-I' + cjson,
          '-I/usr/include/libdrm', '-ffunction-sections', '-fdata-sections']
 commands = ['mkdir -p /out/tests']
-for name, sources in [('drm', ['/src/tests/drm.c']), ('motion', ['/src/tests/motion.c', '/src/src/ui.c']),
+for name, sources in [('volkeys', ['/src/tests/volkeys.c']), ('drm', ['/src/tests/drm.c']), ('motion', ['/src/tests/motion.c', '/src/src/ui.c']),
                       ('lpac', ['/src/tests/lpac.c']), ('esim_text', ['/src/tests/esim_text.c']),
                       ('esim_flow', ['/src/tests/esim_flow.c', '/src/src/ui.c', '/src/src/dialog.c']),
                       ('install', ['/src/tests/install.c', '/src/src/ui.c', '/src/src/dialog.c'])]:

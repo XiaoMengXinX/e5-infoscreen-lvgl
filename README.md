@@ -65,6 +65,23 @@ eSIM 页底部的「高级设置」页面可选择 `AT+CSIM` 或 `AT+CCHO / CGLA
 同页的「后端选择」提供自动、系统 eUICC、lpac AT + curl 和 lpac stdio；按已安装驱动及依赖置灰不可用项；stdio 另做一次不访问实卡的连接握手检查。
 选择保存在 `esim_backend` 中，手动选择固定使用对应路径，默认自动选择优先使用系统后端。
 
+## 音量键
+
+设置 → 声音 → 音量键功能提供亮度、屏幕开关和音量三种模式，默认调亮度。配置与
+[CharlesGool/e5-volkeys](https://github.com/CharlesGool/e5-volkeys) 兼容，直接使用
+`/etc/config/e5-plugin-volkeys` 的 `settings` 节：
+
+| 字段 | 默认值 | 含义 |
+| --- | --- | --- |
+| `mode` | `brightness` | `brightness`、`power`、`volume` |
+| `step` | `10` | 每次亮度变化百分比，范围 5–25 |
+| `off_at_min` | `1` | 最低亮度后再次单按音量减键关屏，仅音量加键恢复 |
+
+最低亮度与步长相同，例如步长为 10% 时最低亮度为 10%；长按重复调节，松开后保存最终亮度。
+屏幕开关模式每次按下切换一次。
+通话期间音量键调节通话音量，双键截图／录屏沿用现有操作。外部修改原插件配置后，
+下一次按键或打开设置时读取更新。
+
 ## 安装
 
 `stage.py` 先执行 e5-linux 的 `devices/common/infoscreen/stage.py`，再安装：

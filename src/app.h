@@ -109,6 +109,7 @@ void shell_bar_lock_place(int32_t y, lv_opa_t opa);
 /* lock.c */
 void lock_create(void);
 void lock_engage(void);
+void lock_dismiss(void);
 bool lock_active(void);
 bool lock_touch_blocked(void);
 void lock_status(const cJSON *st);

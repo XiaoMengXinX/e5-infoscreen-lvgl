@@ -283,6 +283,11 @@ static void finish_unlock(void)
     shell_show(app.page);
 }
 
+void lock_dismiss(void)
+{
+    finish_unlock();
+}
+
 static void unlock_done(lv_anim_t *a)
 {
     if (animating)
