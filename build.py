@@ -58,9 +58,9 @@ def platform_errors():
     return '\n'.join(lines)
 
 
-def embedded_scripts():
-    script = (HERE / 'src/modem_restart.py').read_text(encoding='utf-8')
-    return 'static const char MODEM_RESTART_SCRIPT[] =\n    ' + json.dumps(script) + ';\n'
+def embedded_script(name):
+    script = (HERE / ('src/' + name + '.py')).read_text(encoding='utf-8')
+    return 'static const char ' + name.upper() + '_SCRIPT[] =\n    ' + json.dumps(script) + ';\n'
 
 
 def image():
@@ -77,7 +77,8 @@ def build():
     gen.mkdir(parents=True, exist_ok=True)
     generated = {
         'platform_errors.h': platform_errors(),
-        'modem_restart_script.h': embedded_scripts(),
+        'modem_restart_script.h': embedded_script('modem_restart'),
+        'lpac_bridge_script.h': embedded_script('lpac_bridge'),
     }
     for name, content in generated.items():
         header = gen / name

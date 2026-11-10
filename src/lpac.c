@@ -20,6 +20,7 @@
 
 #include "app.h"
 #include "util.h"
+#include "lpac_bridge_script.h"
 
 #define LPAC "/usr/lib/lpac"
 /* The CP's free command ring; t551m-atd holds nr2/nr6/nr7 and ModemManager
@@ -27,12 +28,14 @@
 #define DEVICE "/dev/stty_nr4"
 #define GNUTLS_CURL "/usr/lib/libcurl-gnutls.so.4"
 #define TLS_SHIM "/tmp/e5-lpac-tls"
+#define SYSTEM_BACKEND "/usr/libexec/unisoc-modem/euicc"
 #define QUEUE 8
 #define PERIOD 40
 #define PROBES 5
 
 struct job {
     int card;
+    bool csim;
     char aid[33];
     char **argv;
     lpac_progress_fn progress;
@@ -45,6 +48,8 @@ static struct {
     pid_t pid;
     int out, in, master, dev;
     int card;
+    bool csim;
+    char transport[16];
     uint32_t started, watchdog;
     char *outbuf;
     size_t outlen, outcap;
@@ -94,12 +99,15 @@ static struct {
 static lv_timer_t *poll;
 /* A finished job, while its callback queues the next one. */
 static bool ending;
+static bool use_csim;
+static char backend[16];
 
 static void job_next(void);
 static void ticking(void);
 static void ccho_send(void);
 static void cgla_send(void);
 static void on_refresh(const char *reply);
+static void at_send(const char *body, uint32_t timeout, void (*then)(const char *reply));
 
 static void copy_text(char *out, size_t size, const char *in)
 {
@@ -108,6 +116,13 @@ static void copy_text(char *out, size_t size, const char *in)
         n = size - 1;
     memcpy(out, in, n);
     out[n] = 0;
+}
+
+static const char *transport(void)
+{
+    if (!*run.transport)
+        copy_text(run.transport, sizeof run.transport, *backend ? backend : access(SYSTEM_BACKEND, X_OK) ? "auto" : "system");
+    return run.transport;
 }
 
 /* The mbedTLS libcurl turns away certificate chains carrying critical
@@ -214,6 +229,32 @@ static bool cgla_line(const char *reply, char *out, size_t size)
     return true;
 }
 
+static bool csim_data(const char *reply, char *out, size_t size)
+{
+    const char *line = strstr(reply, "+CSIM:");
+    if (!line)
+        return false;
+    char *end;
+    unsigned long length = strtoul(line + 6, &end, 10);
+    if (*end != ',')
+        return false;
+    line = end + 1;
+    line += strspn(line, " \"");
+    size_t n = strspn(line, "0123456789abcdefABCDEF");
+    if (n != length || n < 4 || n >= size || n % 2)
+        return false;
+    memcpy(out, line, n);
+    out[n] = 0;
+    return true;
+}
+
+static void csim_send(const char *apdu, void (*then)(const char *reply))
+{
+    char command[sizeof at.reply];
+    snprintf(command, sizeof command, "+CSIM=%zu,\"%s\"", strlen(apdu), apdu);
+    at_send(command, 25000, then);
+}
+
 static bool parse_cgla(const char *body, char *out, size_t size)
 {
     const char *comma = strchr(body, ',');
@@ -262,6 +303,8 @@ static void drain(void)
 
 static void at_send(const char *body, uint32_t timeout, void (*then)(const char *reply))
 {
+    if (run.dev < 0)
+        run.dev = modem_open();
     at.active = true;
     at.then = then;
     at.started = lv_tick_get();
@@ -458,8 +501,64 @@ static void open_channel(void (*opened)(const char *channel))
     ccho_send();
 }
 
+static void csim_close(void (*then)(const char *reply))
+{
+    char apdu[16];
+    snprintf(apdu, sizeof apdu, "007080%02X00", (unsigned)strtoul(bridge.channel, NULL, 10));
+    csim_send(apdu, then);
+}
+
+static void on_csim_rejected(const char *reply)
+{
+    bridge.open = false;
+    bridge.channel[0] = 0;
+    bridge.opened(NULL);
+}
+
+static void on_csim_selected(const char *reply)
+{
+    char data[sizeof at.reply];
+    if (has_line(reply, "OK") && csim_data(reply, data, sizeof data)) {
+        const char *status = data + strlen(data) - 4;
+        if (!strcasecmp(status, "9000") || !strncmp(status, "61", 2)) {
+            bridge.open = true;
+            bridge.opened(bridge.channel);
+            return;
+        }
+    }
+    csim_close(on_csim_rejected);
+}
+
+static void on_csim_channel(const char *reply)
+{
+    char data[32];
+    if (!has_line(reply, "OK") || !csim_data(reply, data, sizeof data) ||
+        strlen(data) != 6 || strcasecmp(data + 2, "9000")) {
+        on_ccho(reply);
+        return;
+    }
+    char byte[3] = {data[0], data[1], 0};
+    unsigned channel = (unsigned)strtoul(byte, NULL, 16);
+    if (!channel || channel > 19) {
+        bridge.opened(NULL);
+        return;
+    }
+    snprintf(bridge.channel, sizeof bridge.channel, "%u", channel);
+    if (channel > 3) {
+        csim_close(on_csim_rejected);
+        return;
+    }
+    char apdu[96];
+    snprintf(apdu, sizeof apdu, "%02XA40400%02X%s", channel, (unsigned)strlen(bridge.aid) / 2, bridge.aid);
+    csim_send(apdu, on_csim_selected);
+}
+
 static void ccho_send(void)
 {
+    if (run.csim) {
+        csim_send("0070000001", on_csim_channel);
+        return;
+    }
     char command[96];
     snprintf(command, sizeof command, "+CCHO=\"%s\"", bridge.aid);
     at_send(command, 20000, on_ccho);
@@ -485,11 +584,17 @@ static void on_cgla(const char *reply)
     char code[8], line[sizeof at.reply];
     if (!cme_error(reply, code, sizeof code)) {
         bridge.busy = false;
-        if (!cgla_line(reply, line, sizeof line)) {
+        char data[sizeof at.reply];
+        if (run.csim && csim_data(reply, data, sizeof data)) {
+            char response[sizeof at.reply + 32];
+            snprintf(response, sizeof response, "+CGLA: %zu,\"%s\"", strlen(data), data);
+            say(response);
+        } else if (!run.csim && cgla_line(reply, line, sizeof line)) {
+            say(line);
+        } else {
             say("ERROR");
             return;
         }
-        say(line);
         say("");
         say("OK");
         return;
@@ -506,6 +611,15 @@ static void on_cgla(const char *reply)
 
 static void cgla_send(void)
 {
+    if (run.csim) {
+        char prefix[3] = {bridge.apdu[0], bridge.apdu[1], 0};
+        unsigned cla = (unsigned)strtoul(prefix, NULL, 16);
+        unsigned channel = (unsigned)strtoul(bridge.channel, NULL, 10);
+        snprintf(prefix, sizeof prefix, "%02X", (cla & 0xfc) | channel);
+        memcpy(bridge.apdu, prefix, 2);
+        csim_send(bridge.apdu, on_cgla);
+        return;
+    }
     char command[sizeof at.reply];
     snprintf(command, sizeof command, "+CGLA=%s,%d,\"%s\"", bridge.channel, (int)strlen(bridge.apdu), bridge.apdu);
     at_send(command, 25000, on_cgla);
@@ -538,6 +652,10 @@ static void on_cchc(const char *reply)
 static void cchc_request(void)
 {
     if (bridge.open) {
+        if (run.csim) {
+            csim_close(on_cchc);
+            return;
+        }
         char command[64];
         snprintf(command, sizeof command, "+CCHC=%s", bridge.channel);
         at_send(command, 20000, on_cchc);
@@ -598,6 +716,11 @@ static void take_json(const char *line)
         return;
     const char *type = jstr(doc, "type");
     const cJSON *payload = jget(doc, "payload");
+    if (type && !strcmp(type, "transport")) {
+        copy_text(run.transport, sizeof run.transport, jstr_or(payload, "mode", "auto"));
+        cJSON_Delete(doc);
+        return;
+    }
     if (type && !strcmp(type, "progress")) {
         const struct job *job = &run.q[run.head];
         if (jstr_is(payload, "message", "preview")) {
@@ -725,7 +848,7 @@ static void end_job(bool kill_child)
 {
     ending = true;
     if (kill_child)
-        kill(run.pid, SIGKILL);
+        kill(-run.pid, SIGKILL);
     if (run.out >= 0) {
         close(run.out);
         run.out = -1;
@@ -780,8 +903,10 @@ static void end_job(bool kill_child)
 static bool job_start(void)
 {
     struct job *job = &run.q[run.head];
+    bool system_backend = !strcmp(transport(), "system");
     char slave[128] = "";
-    int master = posix_openpt(O_RDWR | O_NOCTTY), slave_fd = -1, fds[2], input[2];
+    int master = system_backend ? -1 : posix_openpt(O_RDWR | O_NOCTTY);
+    int slave_fd = -1, fds[2], input[2];
     if (master >= 0 && !grantpt(master) && !unlockpt(master)) {
         const char *path = ptsname(master);
         if (path && strlen(path) < sizeof slave) {
@@ -796,7 +921,7 @@ static bool job_start(void)
             tcsetattr(slave_fd, TCSANOW, &tio);
         }
     }
-    if (slave_fd < 0 || pipe(fds)) {
+    if ((!system_backend && slave_fd < 0) || pipe(fds)) {
         if (slave_fd >= 0)
             close(slave_fd);
         if (master >= 0)
@@ -812,6 +937,7 @@ static bool job_start(void)
     }
     pid_t pid = fork();
     if (pid == 0) {
+        setpgid(0, 0);
         close(input[1]);
         dup2(input[0], STDIN_FILENO);
         close(input[0]);
@@ -824,17 +950,35 @@ static bool job_start(void)
         if (null >= 0) {
             dup2(null, STDERR_FILENO);
         }
-        setenv("LPAC_APDU", "at", 1);
-        setenv("LPAC_APDU_AT_DEVICE", slave, 1);
-        setenv("LPAC_HTTP", "curl", 1);
-        if (*job->aid)
-            setenv("LPAC_CUSTOM_ISD_R_AID", job->aid, 1);
-        else
-            unsetenv("LPAC_CUSTOM_ISD_R_AID");
-        tls_shim();
-        execv(LPAC, job->argv);
+        if (!system_backend) {
+            setenv("LPAC_APDU_AT_DEVICE", slave, 1);
+            if (*job->aid)
+                setenv("LPAC_CUSTOM_ISD_R_AID", job->aid, 1);
+            else
+                unsetenv("LPAC_CUSTOM_ISD_R_AID");
+            tls_shim();
+        }
+        int argc = 0;
+        while (job->argv[argc])
+            argc++;
+        char slot[2] = {(char)('0' + job->card), 0};
+        char **args = calloc((size_t)argc + 8, sizeof *args);
+        if (!args)
+            _exit(127);
+        args[0] = "python3";
+        args[1] = "-c";
+        args[2] = (char *)LPAC_BRIDGE_SCRIPT;
+        args[3] = run.transport;
+        args[4] = slot;
+        args[5] = job->aid;
+        args[6] = job->csim ? "csim" : "logical";
+        for (int i = 1; i < argc; i++)
+            args[i + 6] = job->argv[i];
+        execv("/usr/bin/python3", args);
         _exit(127);
     }
+    if (pid > 0)
+        setpgid(pid, pid);
     close(fds[1]);
     close(input[0]);
     close(slave_fd);
@@ -846,8 +990,10 @@ static bool job_start(void)
     }
     fcntl(fds[0], F_SETFL, fcntl(fds[0], F_GETFL) | O_NONBLOCK);
     fcntl(fds[0], F_SETFD, FD_CLOEXEC);
-    fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK);
-    fcntl(master, F_SETFD, FD_CLOEXEC);
+    if (master >= 0) {
+        fcntl(master, F_SETFL, fcntl(master, F_GETFL) | O_NONBLOCK);
+        fcntl(master, F_SETFD, FD_CLOEXEC);
+    }
     if (run.dev >= 0) {
         close(run.dev);
         run.dev = -1;
@@ -857,8 +1003,8 @@ static bool job_start(void)
     run.in = input[1];
     fcntl(run.in, F_SETFD, FD_CLOEXEC);
     run.master = master;
-    run.dev = modem_open();
     run.card = job->card;
+    run.csim = job->csim;
     run.started = lv_tick_get();
     run.watchdog = job->argv[1] && job->argv[2] && !strcmp(job->argv[1], "profile") && !strcmp(job->argv[2], "download")
                        ? 300000
@@ -894,7 +1040,8 @@ static void tick(lv_timer_t *t)
     if (run.pid >= 0) {
         output_poll();
         if (run.pid >= 0) {
-            pty_poll();
+            if (run.master >= 0)
+                pty_poll();
             if (run.pid >= 0) {
                 wait_poll();
                 at_poll();
@@ -939,7 +1086,18 @@ static void on_refresh(const char *reply)
 
 bool lpac_present(void)
 {
-    return !access(LPAC, X_OK) && !access(GNUTLS_CURL, R_OK);
+    return !access(LPAC, X_OK);
+}
+
+void lpac_set_backend(const char *mode)
+{
+    copy_text(backend, sizeof backend, mode);
+    run.transport[0] = 0;
+}
+
+void lpac_set_interface(bool csim)
+{
+    use_csim = csim;
 }
 
 void lpac_call(int card, const char *aid, char *const argv[], lpac_progress_fn progress, lpac_done_fn done)
@@ -967,7 +1125,7 @@ void lpac_call(int card, const char *aid, char *const argv[], lpac_progress_fn p
         }
     }
     struct job *job = &run.q[(run.head + run.count) % QUEUE];
-    *job = (struct job){.card = card, .argv = args, .progress = progress, .done = done};
+    *job = (struct job){.card = card, .csim = use_csim, .argv = args, .progress = progress, .done = done};
     if (aid)
         copy_text(job->aid, sizeof job->aid, aid);
     run.count++;
@@ -978,8 +1136,8 @@ bool lpac_download_confirm(bool accept)
 {
     if (!run.preview)
         return false;
-    const char *answer = accept ? "y\n" : "n\n";
-    if (write(run.in, answer, 2) != 2)
+    const char *answer = accept ? "y" : "n";
+    if (write(run.in, answer, 1) != 1)
         return false;
     run.preview = false;
     run.started = lv_tick_get();
@@ -999,8 +1157,10 @@ void lpac_cancel(void)
 
 void lpac_sim_refresh(int card, lpac_done_fn done)
 {
-    if (run.dev < 0)
-        run.dev = modem_open();
+    if (!strcmp(transport(), "system")) {
+        lpac_call(card, NULL, (char *const[]){"__refresh", NULL}, NULL, done);
+        return;
+    }
     run.card = card;
     run.refreshing = true;
     run.refresh_ok = true;
@@ -1009,39 +1169,47 @@ void lpac_sim_refresh(int card, lpac_done_fn done)
     at_send("+SFUN=5", 20000, on_off);
 }
 
-static void on_estk_opened(const char *reply)
+static void on_estk_channel(const char *channel)
 {
-    char channel[16];
-    if (!has_line(reply, "OK") || !ccho_channel(reply, channel, sizeof channel) || !strcmp(channel, "0")) {
+    if (!channel) {
         run.refresh_ok = false;
-        on_refresh(reply);
+        on_refresh("ERROR\r\n");
         return;
     }
     char command[32];
+    if (run.csim) {
+        csim_close(on_refresh);
+        return;
+    }
     snprintf(command, sizeof command, "+CCHC=%s", channel);
     at_send(command, 20000, on_refresh);
 }
 
 void lpac_probe_estk(int card, lpac_done_fn done)
 {
-    if (run.dev < 0)
-        run.dev = modem_open();
+    if (!strcmp(transport(), "system")) {
+        lpac_call(card, NULL, (char *const[]){"__probe", NULL}, NULL, done);
+        return;
+    }
     run.card = card;
+    run.csim = use_csim;
     run.refreshing = true;
     run.refresh_ok = true;
     run.refresh_done = done;
     ticking();
-    at_send("+CCHO=\"A06573746B6D65FFFFFFFFFFFF6D6774\"", 20000, on_estk_opened);
+    copy_text(bridge.aid, sizeof bridge.aid, "A06573746B6D65FFFFFFFFFFFF6D6774");
+    open_channel(on_estk_channel);
 }
 
 void lpac_stop(void)
 {
+    run.transport[0] = 0;
     for (int i = 0; i < run.count; i++)
         free_job(&run.q[(run.head + i) % QUEUE]);
     run.count = 0;
     run.head = 0;
     if (run.pid >= 0) {
-        kill(run.pid, SIGKILL);
+        kill(-run.pid, SIGKILL);
         if (run.out >= 0)
             close(run.out);
         if (run.master >= 0)

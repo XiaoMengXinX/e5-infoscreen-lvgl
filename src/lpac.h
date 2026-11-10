@@ -4,13 +4,15 @@
 
 #include "cJSON.h"
 
-/* Bridges lpac's AT device through a pty to the selected SIM's command ring. */
+/* Uses the system eUICC backend or bridges installed lpac drivers through a pty. */
 
 typedef void (*lpac_progress_fn)(const char *step, const cJSON *data);
 /* data is the "lpa" payload's data field, valid only during the call. */
 typedef void (*lpac_done_fn)(bool ok, const cJSON *data, const char *error, const char *detail);
 
 bool lpac_present(void);
+void lpac_set_interface(bool csim);
+void lpac_set_backend(const char *mode);
 
 /* Runs one lpac command against the SIM slot (0 or 1), e.g. {"profile", "list",
  * NULL}, queued behind earlier calls. NULL aid selects the standard ISD-R. */
