@@ -21,7 +21,7 @@
 | `src/stk.c` | SIM 卡应用（STK）菜单与主动式命令 |
 | `src/speedtest.c` | 网速测试：speedtest-go 与全球网测两种后端，按需安装 |
 | `src/install.c` | 安装对话框：脚本的步骤与进度，测速与 eSIM 共用 |
-| `src/lpac.c` | lpac 运行器：伪终端 AT 桥接直连 CP 的空闲命令环，驱动所选卡槽的 eUICC |
+| `src/lpac.c` `src/lpac_bridge.py` | eSIM 通信：优先复用系统 eUICC 后端；老系统通过伪终端桥接 lpac 的 AT／stdio 驱动 |
 | `src/esim.c` | eSIM 管理：配置文件、下载前确认、自动通知上报、芯片详情、eSTK.me 多 SE 选择 |
 | `src/modem_restart.c` `src/modem_restart.py` | 信息屏内的基带重启流程：暂停控制通道、重置 CP、恢复 SIM 射频、网络设置和数据连接 |
 | `src/battery.c` | 电池详情：使用时长、预估续航、电量历史 |
@@ -51,6 +51,19 @@ python3 build.py
 中的 SHA-256 校验后缓存在 `out/cache/`。
 
 回归检查运行 `python3 tools/check.py`，覆盖翻页事件、慢帧调度和动画时间步，见 [tests/README.md](tests/README.md)。
+
+eSIM 在存在 `/usr/libexec/unisoc-modem/euicc` 时复用其 `Owner`、`APDU`、`lpac` 和共享操作锁，
+由系统处理 AT 路由及 HTTPS。其余系统根据 `lpac driver list` 选择 AT 或 stdio，本轮使用中复用检测结果；
+stdio 的 APDU 经现有桥接发送，HTTP 使用可用的 curl 驱动或 Python HTTPS。
+老 AT／curl 路径缺少 GnuTLS 时按需安装 `libcurl-gnutls4`；stdio HTTPS 缺少 Python TLS 时安装 `python3-openssl`。
+下载阶段由 lpac 事件显示；收到真实写入字节数时显示进度条。
+兼容脚本内嵌在界面程序中。系统后端失败会返回错误，写卡操作不会切换后端重试。
+
+eSIM 页底部的「高级设置」页面可选择 `AT+CSIM` 或 `AT+CCHO / CGLA`，默认使用 CSIM，
+选择保存在 `/etc/config/e5-infoscreen` 的 `esim_interface` 中。系统后端和老桥接均使用该选择，
+切换后重新读取卡片；聚焦接口选项后可用左右键选择。
+同页的「后端选择」提供自动、系统 eUICC、lpac AT + curl 和 lpac stdio；按已安装驱动及依赖置灰不可用项；stdio 另做一次不访问实卡的连接握手检查。
+选择保存在 `esim_backend` 中，手动选择固定使用对应路径，默认自动选择优先使用系统后端。
 
 ## 安装
 

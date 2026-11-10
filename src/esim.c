@@ -19,7 +19,7 @@
 #define NAME_CHARS 64
 #define NAME_BYTES (NAME_CHARS * 4 + 1)
 
-enum view { V_LOADING, V_ROOT, V_MISSING, V_DOWNLOAD, V_RENAME, V_NOTIF_LOADING, V_NOTIFS, V_INFO, V_WAIT };
+enum view { V_LOADING, V_ROOT, V_MISSING, V_DOWNLOAD, V_RENAME, V_NOTIF_LOADING, V_NOTIFS, V_INFO, V_INTERFACE, V_WAIT };
 enum action { A_SWITCH, A_RENAME, A_DELETE, A_DOWNLOAD, A_NOTIFICATION };
 
 struct slot {
@@ -33,7 +33,7 @@ struct slot {
 static const char *const se_aids[] = {"A06573746B6D65FFFF4953442D522030", "A06573746B6D65FFFF4953442D522031"};
 
 static struct {
-    lv_obj_t *root, *body, *switcher, *tabs[2], *se_switcher;
+    lv_obj_t *root, *body, *switcher, *tabs[2], *se_switcher, *interfaces[2], *notif_actions, *notif_list;
 } ui;
 
 static struct {
@@ -43,12 +43,16 @@ static struct {
     int current;
     char iccid[24], name[NAME_BYTES];
     char *activation, *confirmation;
-    bool enabled, downloading, cancelling;
+    bool enabled, downloading, cancelling, csim;
     cJSON *metadata, *before;
     uint32_t seq;
     int reloads, pending, probe;
     lv_obj_t *step;
-} state = {.current = 1};
+    char backend[16];
+    unsigned backends;
+    bool backends_ready;
+    struct ui_meter write;
+} state = {.current = 1, .csim = true};
 
 /* Bulk handling walks the notifications one at a time in sequence order: one
  * failure must not stop the rest, which is what lpac's own -a does. */
@@ -102,6 +106,73 @@ static void on_before_change(bool ok, const cJSON *data, const char *error, cons
 static void on_auto_list(bool ok, const cJSON *data, const char *error, const char *detail);
 static void download_dialog(void);
 static void download_command(void);
+static void prompt_install(const char *packages);
+static const char *install_packages;
+
+static void reset_se(void)
+{
+    for (int card = 0; card < 2; card++) {
+        state.slots[card].scanned = false;
+        state.slots[card].ses = 0;
+        state.slots[card].aid = NULL;
+    }
+}
+
+static void choose_interface(bool csim)
+{
+    if (state.csim == csim) {
+        state.view = V_ROOT;
+        render();
+        return;
+    }
+    state.csim = csim;
+    screen_option_set("esim_interface", csim ? "csim" : "logical");
+    lpac_set_interface(csim);
+    reset_se();
+    load();
+}
+
+static void on_choose_interface(lv_event_t *e)
+{
+    choose_interface((bool)(intptr_t)lv_event_get_user_data(e));
+}
+
+static const char *const backend_modes[] = {"", "system", "at:curl", "stdio"};
+
+static void on_backend(lv_event_t *e)
+{
+    int index = (int)(intptr_t)lv_event_get_user_data(e);
+    snprintf(state.backend, sizeof state.backend, "%s", backend_modes[index]);
+    screen_option_set("esim_backend", state.backend);
+    lpac_set_backend(state.backend);
+    reset_se();
+    load();
+}
+
+static void on_backends(bool ok, const cJSON *data, const char *error, const char *detail)
+{
+    state.backends_ready = true;
+    state.backends = 0;
+    if (ok) {
+        for (int i = 1; i < 4; i++)
+            if (cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(data, backend_modes[i])))
+                state.backends |= 1u << i;
+    } else {
+        toast("%s", L("无法检测后端", "Cannot detect backends"));
+    }
+    if (state.view == V_INTERFACE)
+        render();
+}
+
+static void on_interface(lv_event_t *e)
+{
+    on_switcher = false;
+    state.view = V_INTERFACE;
+    state.backends_ready = false;
+    render();
+    lv_obj_scroll_to_view_recursive(ui.switcher, LV_ANIM_OFF);
+    lpac_call(state.current, NULL, (char *const[]){"__backends", NULL}, NULL, on_backends);
+}
 
 static void call(char *const argv[], lpac_progress_fn progress, lpac_done_fn done)
 {
@@ -171,6 +242,12 @@ static const char *operation_name(const char *operation)
  * detail; either can be empty. */
 static const char *failure_text(const char *error, const char *detail)
 {
+    if (!strcmp(error, "operation_busy"))
+        return L("其他 eSIM 操作正在进行，请稍后重试", "Another eSIM operation is running; try again later");
+    if (!strncmp(error, "lpac_", 5) && strstr(error, "driver"))
+        return L("lpac 缺少兼容的通信驱动", "lpac has no compatible communication driver");
+    if (!strcmp(error, "esim_backend"))
+        return L("eSIM 后端运行失败", "The eSIM backend failed");
     if (!strcmp(error, "euicc_init"))
         return L("无法访问 eSIM", "Cannot reach the eSIM");
     if (!strcmp(error, "activation_code") || !strcmp(error, "matching_id"))
@@ -231,6 +308,7 @@ static const char *download_step(const char *step)
         {"es10b_prepare_download", "正在准备下载…", "Preparing the download…"},
         {"es9p_get_bound_profile_package", "正在获取配置文件…", "Fetching the profile…"},
         {"es10b_load_bound_profile_package", "正在写入 eSIM…", "Writing to the eSIM…"},
+        {"es10b_load_bound_profile_package:progress", "正在写入 eSIM…", "Writing to the eSIM…"},
         {"es10b_cancel_session", "正在取消会话…", "Cancelling the session…"},
         {"es9p_cancel_session", "正在取消会话…", "Cancelling the session…"},
     };
@@ -442,14 +520,14 @@ static void notifs(void)
         message(L("没有待处理的通知", "No pending notifications"));
         return;
     }
-    lv_obj_t *actions = ui_box(ui.body, LV_FLEX_FLOW_ROW, 8);
+    lv_obj_t *actions = ui.notif_actions = ui_box(ui.body, LV_FLEX_FLOW_ROW, 8);
     lv_obj_t *process = ui_button(actions, L("处理全部", "Process all"), on_process_all, NULL);
     ui_primary(process);
     lv_obj_set_flex_grow(process, 1);
     lv_obj_t *remove = ui_button(actions, L("全部删除", "Delete all"), on_confirm_remove_all, NULL);
     ui_danger(remove);
     lv_obj_set_flex_grow(remove, 1);
-    lv_obj_t *list = ui_box(ui.body, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
+    lv_obj_t *list = ui.notif_list = ui_box(ui.body, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     const cJSON *notification;
     int i = 0;
     cJSON_ArrayForEach(notification, notifications) {
@@ -461,11 +539,18 @@ static void notifs(void)
     }
 }
 
+static const char *info_value(const char *value)
+{
+    while (*value && isspace((unsigned char)*value))
+        value++;
+    return *value ? value : L("未提供", "Not provided");
+}
+
 static void info_text(lv_obj_t *parent, const char *label, const char *value)
 {
     lv_obj_t *row = ui_box(parent, LV_FLEX_FLOW_COLUMN, 4);
     lv_label_set_text(ui_text(row, 12, false, theme.dim), label);
-    ui_note(row, value);
+    ui_note(row, info_value(value));
 }
 
 static void info_field(lv_obj_t *parent, const cJSON *chip, const char *label, const char *path)
@@ -482,11 +567,11 @@ static void info_field(lv_obj_t *parent, const cJSON *chip, const char *label, c
         const cJSON *item;
         cJSON_ArrayForEach(item, value)
             if (cJSON_IsString(item))
-                ui_note(parent, item->valuestring);
+                ui_note(parent, info_value(item->valuestring));
         if (!cJSON_GetArraySize(value))
-            ui_note(parent, "--");
+            ui_note(parent, L("未提供", "Not provided"));
     } else {
-        info_text(parent, label, "--");
+        info_text(parent, label, "");
     }
 }
 
@@ -536,6 +621,8 @@ static void render(void)
     keyboard_close();
     lv_obj_clean(ui.body);
     ui.se_switcher = NULL;
+    ui.interfaces[0] = ui.interfaces[1] = NULL;
+    ui.notif_actions = ui.notif_list = NULL;
     switch (state.view) {
     case V_LOADING:
         message(L("正在读取 eSIM 信息…", "Reading the eSIM…"));
@@ -545,6 +632,7 @@ static void render(void)
         break;
     case V_ROOT:
         root();
+        ui_row(ui.body, "settings", L("高级设置", "Advanced settings"), NULL, ROW_CHEVRON, on_interface, NULL);
         if (restore_se_focus && ui.se_switcher) {
             lv_group_focus_obj(ui.se_switcher);
             lv_obj_add_state(ui.se_switcher, LV_STATE_FOCUS_KEY);
@@ -565,6 +653,26 @@ static void render(void)
         break;
     case V_INFO:
         info();
+        break;
+    case V_INTERFACE:
+        ui_heading(ui.body, L("高级设置", "Advanced settings"));
+        ui_note(ui.body, L("后端选择", "Backend"));
+        const char *names[] = {L("自动选择", "Automatic"), L("系统 eUICC", "System eUICC"),
+                               "lpac AT + curl", "lpac stdio"};
+        for (int i = 0; i < 4; i++) {
+            bool selected = !strcmp(state.backend, backend_modes[i]);
+            bool available = i == 0 || (state.backends_ready && (state.backends & (1u << i)));
+            const char *status = selected ? L("已选择", "Selected") : available ? NULL :
+                state.backends_ready ? L("不可用", "Unavailable") : L("检测中…", "Checking…");
+            lv_obj_t *row = ui_row(ui.body, NULL, names[i], status, selected ? ROW_ON : 0,
+                                  on_backend, (void *)(intptr_t)i);
+            lv_obj_set_state(row, LV_STATE_DISABLED, !available);
+        }
+        ui_note(ui.body, L("接口", "APDU interface"));
+        ui.interfaces[0] = ui_row(ui.body, NULL, "AT+CSIM", state.csim ? L("已选择", "Selected") : NULL,
+               state.csim ? ROW_ON : 0, on_choose_interface, (void *)1);
+        ui.interfaces[1] = ui_row(ui.body, NULL, "AT+CCHO / CGLA", !state.csim ? L("已选择", "Selected") : NULL,
+               !state.csim ? ROW_ON : 0, on_choose_interface, NULL);
         break;
     case V_WAIT: {
         char text[64];
@@ -753,6 +861,7 @@ static void on_add(lv_event_t *e)
 static void on_download_closed(void)
 {
     state.step = NULL;
+    state.write = (struct ui_meter){0};
     if (!state.downloading)
         return;
     state.cancelling = true;
@@ -796,16 +905,35 @@ static void on_download_progress(const char *step, const cJSON *data)
         dialog_on_close(NULL);
         dialog_open(L("确认下载配置文件", "Confirm profile download"), NULL);
         state.step = NULL;
+        state.write = (struct ui_meter){0};
         lv_obj_t *sheet = dialog_sheet();
-        info_text(sheet, L("运营商", "Provider"), jstr_or(state.metadata, "serviceProviderName", "--"));
-        info_text(sheet, L("配置名称", "Profile name"), jstr_or(state.metadata, "profileName", "--"));
-        info_text(sheet, "ICCID", jstr_or(state.metadata, "iccid", "--"));
-        info_text(sheet, L("配置类别", "Profile class"), jstr_or(state.metadata, "profileClass", "--"));
+        info_text(sheet, L("运营商", "Provider"), jstr_or(state.metadata, "serviceProviderName", ""));
+        info_text(sheet, L("配置名称", "Profile name"), jstr_or(state.metadata, "profileName", ""));
+        info_text(sheet, "ICCID", jstr_or(state.metadata, "iccid", ""));
+        info_text(sheet, L("配置类别", "Profile class"), jstr_or(state.metadata, "profileClass", ""));
         ui_primary(dialog_button(L("确认下载", "Download"), on_accept_download, NULL));
         dialog_button(L("取消", "Cancel"), on_cancel_download, NULL);
         dialog_on_close(on_download_closed);
     } else if (state.step) {
         ui_set_text(state.step, download_step(step));
+        const cJSON *written = cJSON_GetObjectItemCaseSensitive(data, "written");
+        const cJSON *total = cJSON_GetObjectItemCaseSensitive(data, "total");
+        if ((!strcmp(step, "es10b_load_bound_profile_package") ||
+             !strcmp(step, "es10b_load_bound_profile_package:progress")) &&
+            cJSON_IsNumber(written) && cJSON_IsNumber(total) && total->valuedouble > 0) {
+            int percent = (int)(100 * written->valuedouble / total->valuedouble);
+            percent = LV_CLAMP(0, percent, 100);
+            char done[32], size[32], text[96];
+            fmt_bytes(written->valuedouble, done, sizeof done);
+            fmt_bytes(total->valuedouble, size, sizeof size);
+            snprintf(text, sizeof text, "%d%% · %s / %s", percent, done, size);
+            if (!state.write.bar) {
+                state.write = ui_meter(dialog_sheet(), L("写入进度", "Write progress"));
+                lv_obj_move_to_index(lv_obj_get_parent(state.write.value), -3);
+                lv_obj_move_to_index(state.write.bar, -2);
+            }
+            ui_meter_set(&state.write, text, percent, theme.accent);
+        }
     }
 }
 
@@ -815,6 +943,7 @@ static void on_downloaded(bool ok, const cJSON *data, const char *error, const c
     if (dialog_is_open() && !state.cancelling)
         dialog_close();
     state.step = NULL;
+    state.write = (struct ui_meter){0};
     cJSON_Delete(state.metadata);
     state.metadata = NULL;
     if (!ok) {
@@ -968,8 +1097,8 @@ static bool bulk_next(void)
         free(bulk.seqs);
         bulk.seqs = NULL;
         if (bulk.failed)
-            toast("%s", bulk.automatic ? L("操作已完成，部分通知尚未上报，可在通知页重试", "Operation completed; retry pending notifications from Notifications")
-                                     : L("部分通知未能处理，可稍后重试", "Some notifications could not be handled; try again later"));
+            toast("%s", bulk.automatic ? L("部分通知未上报\n请到通知页重试", "Notifications pending\nRetry in Notifications")
+                                     : L("部分通知处理失败\n请稍后重试", "Some notifications failed\nTry again later"));
         else if (!bulk.automatic)
             toast(bulk.remove ? L("已删除 %d 条通知", "Deleted %d notifications")
                               : L("已处理 %d 条通知", "Handled %d notifications"), bulk.ok);
@@ -1040,7 +1169,7 @@ static void on_auto_list(bool ok, const cJSON *data, const char *error, const ch
     if (!ok) {
         cJSON_Delete(state.before);
         state.before = NULL;
-        toast("%s", L("操作已完成，读取通知失败，可在通知页重试", "Operation completed; open Notifications to retry reporting"));
+        toast("%s", L("读取通知失败\n请到通知页重试", "Cannot read notifications\nRetry in Notifications"));
         load();
         return;
     }
@@ -1110,6 +1239,12 @@ static void on_chip(bool ok, const cJSON *data, const char *error, const char *d
 {
     struct slot *s = &state.slots[state.current];
     if (!ok) {
+        if (!strcmp(error, "python_ssl") || !strcmp(error, "curl_gnutls")) {
+            state.view = V_MISSING;
+            prompt_install(!strcmp(error, "python_ssl") ? "python3-openssl" : "libcurl-gnutls4");
+            render();
+            return;
+        }
         if (pick) {
             pick = false;
             state.current = 1;
@@ -1154,19 +1289,20 @@ static void on_notif_count(bool ok, const cJSON *data, const char *error, const 
     arrived();
 }
 
-static const char install_script[] =
-    "echo @update\n"
-    "apk --timeout 15 update --progress-fd 3 3>&1 >/dev/null 2>&1\n"
-    "echo @add\n"
-    "exec apk --timeout 30 add --progress-fd 3 lpac libcurl-gnutls4 3>&1 >/dev/null 2>&1\n";
-
 static void on_install(lv_event_t *e)
 {
-    install_run(L("正在安装 eSIM 组件", "Installing eSIM components"), install_script, load);
+    char script[384];
+    snprintf(script, sizeof script,
+             "echo @update\n"
+             "apk --timeout 15 update --progress-fd 3 3>&1 >/dev/null 2>&1\n"
+             "echo @add\n"
+             "exec apk --timeout 30 add --progress-fd 3 %s 3>&1 >/dev/null 2>&1\n", install_packages);
+    install_run(L("正在安装 eSIM 组件", "Installing eSIM components"), script, load);
 }
 
-static void prompt_install(void)
+static void prompt_install(const char *packages)
 {
+    install_packages = packages;
     dialog_open(L("安装 eSIM 组件", "Install eSIM components"),
                 L("eSIM 管理需要安装运行组件，是否从软件源安装？", "Install the eSIM components from the package feed?"));
     dialog_button(L("下载安装", "Install"), on_install, NULL);
@@ -1179,7 +1315,7 @@ static void load(void)
     lpac_stop();
     if (!lpac_present()) {
         state.view = V_MISSING;
-        prompt_install();
+        prompt_install("lpac libcurl-gnutls4");
         render();
         return;
     }
@@ -1232,11 +1368,15 @@ void esim_open(void)
         return;
     }
     on_switcher = pick = true;
-    for (int card = 0; card < 2; card++) {
-        state.slots[card].scanned = false;
-        state.slots[card].ses = 0;
-        state.slots[card].aid = NULL;
-    }
+    char interface[16];
+    screen_option("esim_interface", interface, sizeof interface);
+    state.csim = strcmp(interface, "logical") != 0;
+    lpac_set_interface(state.csim);
+    screen_option("esim_backend", state.backend, sizeof state.backend);
+    if (strcmp(state.backend, "system") && strcmp(state.backend, "at:curl") && strcmp(state.backend, "stdio"))
+        state.backend[0] = 0;
+    lpac_set_backend(state.backend);
+    reset_se();
     state.current = 0;
     load();
 }
@@ -1273,6 +1413,7 @@ bool esim_back(void)
     case V_RENAME:
     case V_NOTIFS:
     case V_INFO:
+    case V_INTERFACE:
         state.view = V_ROOT;
         render();
         return true;
@@ -1316,8 +1457,36 @@ static void focus_entry(lv_obj_t *entry)
  * Up from the first entry walks onto it. */
 bool esim_key(const struct key_event *key)
 {
+    lv_obj_t *focused = input_key_focus(input_group());
+    if (state.view == V_INTERFACE && focused &&
+        (focused == ui.interfaces[0] || focused == ui.interfaces[1]) &&
+        (key->kind == KEY_KIND_LEFT || key->kind == KEY_KIND_RIGHT)) {
+        choose_interface(key->kind == KEY_KIND_LEFT);
+        return true;
+    }
     if (state.view != V_ROOT && state.view != V_NOTIFS)
         return key->kind == KEY_KIND_LEFT || key->kind == KEY_KIND_RIGHT;
+    if (state.view == V_NOTIFS && !on_switcher && focused && ui.notif_actions) {
+        if (inside(focused, ui.notif_actions)) {
+            switch (key->kind) {
+            case KEY_KIND_LEFT:
+            case KEY_KIND_RIGHT:
+                focus_entry(lv_obj_get_child(ui.notif_actions, key->kind == KEY_KIND_RIGHT));
+                return true;
+            case KEY_KIND_DOWN:
+                focus_entry(end_entry(ui.notif_list, false));
+                return true;
+            case KEY_KIND_UP:
+                focus_entry(lv_obj_get_child(ui.notif_actions, 0));
+                break;
+            default:
+                break;
+            }
+        } else if (key->kind == KEY_KIND_UP && focused == end_entry(ui.notif_list, false)) {
+            focus_entry(lv_obj_get_child(ui.notif_actions, 0));
+            return true;
+        }
+    }
     switch (key->kind) {
     case KEY_KIND_LEFT:
     case KEY_KIND_RIGHT:
