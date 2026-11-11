@@ -12,6 +12,8 @@ void input_init(lv_display_t *display);
 int input_poll_fds(struct pollfd *fds);
 void input_dispatch(const struct pollfd *fds, int count);
 int input_touch_count(void);
+/* A keypad with a * key, which deletes in a text field. */
+bool input_has_star(void);
 /* Last touch report's monotonic timestamp, in milliseconds. */
 double input_touch_time(void);
 /* Releases the pressed widget and keeps the rest of the touch from LVGL. */

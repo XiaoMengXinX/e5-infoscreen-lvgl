@@ -1313,11 +1313,12 @@ static void focus_move(int dir)
         scan.best = wrap.best;
     }
     if (scan.best) {
+        /* Before the focus, so a field's keyboard can still lift the field above it. */
+        lv_obj_scroll_to_view_recursive(scan.best, LV_ANIM_ON);
         lv_group_focus_obj(scan.best);
         /* LVGL marks the focus state from the group's indev, which it resolves to
          * the touch device whenever one exists, so set it here for the keypad. */
         lv_obj_add_state(scan.best, LV_STATE_FOCUS_KEY);
-        lv_obj_scroll_to_view_recursive(scan.best, LV_ANIM_ON);
     }
 }
 
@@ -1417,6 +1418,20 @@ void shell_key(const struct key_event *key)
             input_focus_move(ui.notice_group, 1);
         else if (key->kind == KEY_KIND_OK)
             input_focus_key(LV_KEY_ENTER);
+        return;
+    }
+    /* In a field the keypad types, * deletes, and Left and Right move the cursor. */
+    if (field_focused() &&
+        (key->kind == KEY_KIND_CHAR || key->kind == KEY_KIND_LEFT || key->kind == KEY_KIND_RIGHT)) {
+        lv_obj_t *field = lv_group_get_focused(input_group());
+        if (key->kind == KEY_KIND_CHAR && key->ch == '*')
+            lv_textarea_delete_char(field);
+        else if (key->kind == KEY_KIND_CHAR)
+            lv_textarea_add_char(field, (uint32_t)key->ch);
+        else if (key->kind == KEY_KIND_LEFT)
+            lv_textarea_cursor_left(field);
+        else
+            lv_textarea_cursor_right(field);
         return;
     }
     if (key->kind == KEY_KIND_UP || key->kind == KEY_KIND_DOWN || key->kind == KEY_KIND_LEFT ||

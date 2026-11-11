@@ -28,6 +28,7 @@ struct device {
 
 static struct device devices[INPUT_MAX_DEVICES];
 static int device_count;
+static bool star_key;
 
 static struct {
     int slot;
@@ -244,6 +245,7 @@ static void open_devices(void)
             touch.y[0] = d->y.value;
         } else if (TEST(keys, KEY_POWER) || TEST(keys, KEY_1) || TEST(keys, KEY_VOLUMEUP) || TEST(keys, KEY_BACK)) {
             d->kind = DEVICE_KEYS;
+            star_key |= TEST(keys, KEY_NUMERIC_STAR) || TEST(keys, KEY_KPASTERISK);
         } else {
             close(fd);
             continue;
@@ -287,6 +289,11 @@ int input_poll_fds(struct pollfd *fds)
 double input_touch_time(void)
 {
     return touch.time;
+}
+
+bool input_has_star(void)
+{
+    return star_key;
 }
 
 int input_touch_count(void)
