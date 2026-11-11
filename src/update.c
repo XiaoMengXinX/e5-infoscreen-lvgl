@@ -351,8 +351,8 @@ static void show_prompt(void)
                "Built %.31s · commit %.12s\nThe screen restarts after the download; the current binary is kept for rollback."),
              when, latest.commit);
     dialog_open(L("发现新版本", "Update available"), note);
+    ui_primary(dialog_button(L("下载并更新", "Download and update"), on_apply, NULL));
     dialog_cancel();
-    dialog_button(L("下载并更新", "Download and update"), on_apply, NULL);
 }
 
 static void prompt_retry(lv_timer_t *t)
