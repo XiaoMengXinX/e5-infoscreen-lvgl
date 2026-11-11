@@ -1971,6 +1971,15 @@ static void clicked(const char *key)
     }
 }
 
+void settings_open_devices(void)
+{
+    settings_reset();
+    struct view *v = push(V_DEVICES, L("设备管理", "Devices"));
+    snprintf(v->cat, sizeof v->cat, "devices");
+    load(v, "/devices");
+    shell_show(PAGE_SETTINGS);
+}
+
 void settings_open_category(const char *id, const char *title, const char *item_id)
 {
     settings_reset();

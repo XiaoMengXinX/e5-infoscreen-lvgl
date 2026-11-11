@@ -164,6 +164,8 @@ void apps_open_toolkit(void);
 /* pages/settings.c */
 void settings_reset(void);
 void settings_open_category(const char *id, const char *title, const char *item);
+/* The connected devices, as Devices in the settings opens them. */
+void settings_open_devices(void);
 
 /* pages/sms.c */
 void sms_check(const cJSON *st);

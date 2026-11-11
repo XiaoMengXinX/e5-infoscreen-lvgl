@@ -23,9 +23,12 @@ static struct {
     lv_obj_t *boot, *boot_note, *boot_button;
     lv_obj_t *usb, *usb_title, *usb_detail;
     lv_obj_t *update, *update_version, *update_notes, *update_toggle, *update_error, *update_now, *update_later;
-    lv_obj_t *wan_word, *wan, *wifi_word, *wifi, *power_word, *power, *clients, *battery, *temps[8];
+    lv_obj_t *wan_card, *wan_word, *wan, *wifi_word, *wifi, *power_word, *power, *clients, *battery, *temps[8];
     struct ui_meter memory, storage;
 } ui;
+
+/* When the first of a double press on the network card came. */
+static uint32_t wan_pressed;
 
 static struct {
     cJSON *state;
@@ -195,6 +198,47 @@ static void on_usb(lv_event_t *e)
     settings_open_category("usb", "USB", "usb_role");
 }
 
+static void poll_status(lv_timer_t *t)
+{
+    shell_poll_now();
+}
+
+/* Two presses within the double-click time, by touch or by OK; the card takes
+ * them only while the link is offline. */
+static void on_wan(lv_event_t *e)
+{
+    uint32_t now = lv_tick_get();
+    bool twice = wan_pressed && lv_tick_diff(now, wan_pressed) <= LV_INDEV_DEF_DOUBLE_CLICK_TIME;
+    wan_pressed = twice ? 0 : now;
+    if (!twice)
+        return;
+    api_post("/wan-reconnect", NULL, NULL, NULL);
+    toast("%s", L("正在重新连接", "Reconnecting"));
+    /* As the web page does, the status is read again once the link had time to come up. */
+    lv_timer_set_repeat_count(lv_timer_create(poll_status, 3000, NULL), 1);
+}
+
+static void on_wifi(lv_event_t *e)
+{
+    shell_show(PAGE_HOTSPOT);
+}
+
+static void on_clients(lv_event_t *e)
+{
+    settings_open_devices();
+}
+
+/* A card that opens something on a tap, with the › that says so. */
+static void card_action(lv_obj_t *card, lv_obj_t *row, lv_event_cb_t cb)
+{
+    if (row)
+        lv_label_set_text_static(ui_text(row, 13, false, theme.dim), "›");
+    lv_obj_set_clickable(card, true);
+    lv_obj_set_style_bg_color(card, theme.active, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(card, cb, LV_EVENT_CLICKED, NULL);
+    ui_focusable(card);
+}
+
 static void on_battery(lv_event_t *e)
 {
     battery_open();
@@ -283,16 +327,17 @@ static void create(lv_obj_t *parent)
     lv_obj_add_event_cb(ui.usb, on_usb, LV_EVENT_CLICKED, NULL);
     ui_focusable(ui.usb);
 
+    /* A word row's value sits in a box in the card's row. */
     ui.wan = word_row(page, L("网络", "Network"), &ui.wan_word);
+    ui.wan_card = lv_obj_get_parent(lv_obj_get_parent(lv_obj_get_parent(ui.wan)));
+    card_action(ui.wan_card, NULL, on_wan);
     ui.wifi = word_row(page, L("热点", "Hotspot"), &ui.wifi_word);
+    lv_obj_t *wifi_row = lv_obj_get_parent(lv_obj_get_parent(ui.wifi));
+    card_action(lv_obj_get_parent(wifi_row), wifi_row, on_wifi);
     ui.clients = row(page, L("在线设备", "Clients"));
+    card_action(lv_obj_get_parent(lv_obj_get_parent(ui.clients)), lv_obj_get_parent(ui.clients), on_clients);
     ui.battery = row(page, L("电池", "Battery"));
-    lv_obj_t *battery = lv_obj_get_parent(lv_obj_get_parent(ui.battery));
-    lv_label_set_text_static(ui_text(lv_obj_get_parent(ui.battery), 13, false, theme.dim), "›");
-    lv_obj_set_clickable(battery, true);
-    lv_obj_set_style_bg_color(battery, theme.active, LV_STATE_PRESSED);
-    lv_obj_add_event_cb(battery, on_battery, LV_EVENT_CLICKED, NULL);
-    ui_focusable(battery);
+    card_action(lv_obj_get_parent(lv_obj_get_parent(ui.battery)), lv_obj_get_parent(ui.battery), on_battery);
     ui.power = word_row(page, L("电流 / 电压", "Current / voltage"), &ui.power_word);
     lv_obj_t *usage = ui_card(page);
     ui.memory = ui_meter(usage, L("内存", "Memory"));
@@ -324,7 +369,8 @@ static void usage_meter(struct ui_meter *m, double used, double total)
     ui_meter_set(m, text, pct, pct >= 90 ? theme.poor : pct >= 75 ? theme.fair : theme.good);
 }
 
-static void wan_word(const cJSON *st, const char **word, lv_color_t *color)
+/* True for the plain offline state, the one a reconnect can help. */
+static bool wan_word(const cJSON *st, const char **word, lv_color_t *color)
 {
     const cJSON *m = jget(st, "modem"), *w = jget(st, "wan");
     const char *state = jstr(m, "state"), *reg = jstr(m, "registration");
@@ -338,8 +384,11 @@ static void wan_word(const cJSON *st, const char **word, lv_color_t *color)
         *word = L("连接中", "Connecting"), *color = theme.fair;
     else if (reg && !strcmp(reg, "searching"))
         *word = L("搜索网络", "Searching"), *color = theme.fair;
-    else
+    else {
         *word = L("未连接", "Offline"), *color = theme.poor;
+        return true;
+    }
+    return false;
 }
 
 static void render_usb(const cJSON *st)
@@ -412,11 +461,13 @@ static void status(const cJSON *st)
 
     const char *word;
     lv_color_t color;
-    wan_word(st, &word, &color);
+    bool offline = wan_word(st, &word, &color);
     ui_set_text(ui.wan_word, word);
     lv_obj_set_style_text_color(ui.wan_word, color, 0);
-    size_t len = 0;
-    text[0] = 0;
+    /* Disabled, the card takes neither presses nor the key focus. */
+    lv_obj_set_state(ui.wan_card, LV_STATE_DISABLED, !offline);
+    const char *hint = offline ? L(" · 双击重连", " · Double-tap to reconnect") : "";
+    size_t len = (size_t)snprintf(text, sizeof text, "%s", hint);
     if (jstr(st, "modem.tech") && jtrue(st, "wan.up"))
         len += (size_t)snprintf(text + len, sizeof text - len, " · %s", tech_name(jstr(st, "modem.tech")));
     if (jtrue(st, "wan.up") && (jstr(st, "wan.ipv4") || jstr(st, "wan.ipv6")))
