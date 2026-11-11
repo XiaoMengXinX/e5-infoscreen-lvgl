@@ -21,6 +21,7 @@
 | `src/stk.c` | SIM 卡应用（STK）菜单与主动式命令 |
 | `src/speedtest.c` | 网速测试：speedtest-go 与全球网测两种后端，按需安装 |
 | `src/install.c` | 安装对话框：脚本的步骤与进度，测速与 eSIM 共用 |
+| `src/update.c` | 界面自身更新：检查 release、下载校验、备份、回滚与自动检查 |
 | `src/lpac.c` `src/lpac_bridge.py` | eSIM 通信：优先复用系统 eUICC 后端；老系统通过伪终端桥接 lpac 的 AT／stdio 驱动 |
 | `src/esim.c` | eSIM 管理：配置文件、下载前确认、自动通知上报、芯片详情、eSTK.me 多 SE 选择 |
 | `src/modem_restart.c` `src/modem_restart.py` | 信息屏内的基带重启流程：暂停控制通道、重置 CP、恢复 SIM 射频、网络设置和数据连接 |
@@ -49,6 +50,12 @@ python3 build.py
 在 `alpine:3.22`（linux/arm64）容器中静态链接 musl、FreeType 和 libpng，
 输出 `out/e5-infoscreen-ui`。LVGL 与 cJSON 的源码包按 `build.py`
 中的 SHA-256 校验后缓存在 `out/cache/`。
+
+构建时把构建时间戳和 commit hash 写入 `out/gen/build_version.h` 编进程序，
+并生成 `out/version.json`，其中包含 `build`、`commit` 和程序的 `sha256`。
+设置 `SOURCE_DATE_EPOCH` 可以固定时间戳；CI 使用 `GITHUB_SHA` 作为 commit。
+构建时通过GitHub仓库API读取owner账号，作为信息屏维护者编进程序；仓库由`GITHUB_REPOSITORY`
+指定，默认为`XiaoMengXinX/e5-infoscreen-lvgl`。关于页同时显示信息屏维护者和系统API提供的系统维护者。
 
 回归检查运行 `python3 tools/check.py`，覆盖翻页事件、慢帧调度和动画时间步，见 [tests/README.md](tests/README.md)。
 
@@ -111,6 +118,21 @@ install.bat                           # Windows
 ./uninstall.sh                        # macOS、Linux
 uninstall.bat                         # Windows
 ```
+
+## 自动更新
+
+设置 → 关于 显示程序的构建时间和 commit，并提供检查更新、自动检查更新和回滚更新。
+检查时先从 release 的 Atom feed 解析最新标签，再经 `gh-proxy.org`、`cdn.gh-proxy.org`、
+`ghproxy.net` 或 GitHub 直连读取该标签的 `version.json`；标签解析失败时回退到 latest。
+构建时间比当前程序新时提示下载；
+下载的 `e5-infoscreen-ui` 校验 `version.json` 的 SHA-256 后，先备份当前程序到
+`/etc/e5-infoscreen/ui.backup`，再替换 `/usr/libexec/e5-infoscreen/ui` 并重启界面。
+回滚使用该备份，回滚后删除备份。自动检查在UI启动1分钟后执行，成功后12小时再次检查，
+失败后6小时重试；已有检查、安装任务或弹窗时延后5分钟，可在关于中关闭。
+发现更新不会主动亮屏；灭屏或锁屏时等待亮屏并解锁后再提示。
+手动检查显示阶段进度和当前连接的服务器，可选择转为后台检查。检查完成后显示结果，
+失败时显示错误弹窗；`version.json`返回HTTP 404时结束检查并提示“更新信息不存在（HTTP 404）”。
+下载更新时显示实际下载百分比，下载校验后显示安装阶段并重启界面。
 
 ## 截图与录屏
 

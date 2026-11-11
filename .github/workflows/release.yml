@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   build:
     # Native arm64: build.py runs its toolchain in an arm64 container.
@@ -39,16 +43,21 @@ jobs:
         run: |
           name=e5-infoscreen-lvgl-${GITHUB_SHA::7}
           mkdir -p dist/$name
-          cp out/e5-infoscreen-ui scripts/* dist/$name/
+          cp out/e5-infoscreen-ui out/version.json scripts/* dist/$name/
           (cd dist && zip -r $name.zip $name)
           echo "PACKAGE=dist/$name.zip" >> "$GITHUB_ENV"
+          tag=build-${{ github.run_number }}
+          [ "${{ github.run_attempt }}" = "1" ] || tag=$tag-${{ github.run_attempt }}
+          echo "TAG=$tag" >> "$GITHUB_ENV"
 
       - name: Release
         working-directory: e5-infoscreen-lvgl
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "build-${{ github.run_number }}" "$PACKAGE" out/e5-infoscreen-ui \
+          gh release create "$TAG" "$PACKAGE" out/e5-infoscreen-ui out/version.json \
+            --draft \
             --target "$GITHUB_SHA" \
             --title "Build ${{ github.run_number }} (${GITHUB_SHA::7})" \
             --notes "$(git log -1 --format=%B)"
+          gh release edit "$TAG" --draft=false

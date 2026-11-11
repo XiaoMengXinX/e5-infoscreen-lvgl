@@ -9,6 +9,7 @@
 #include "font.h"
 #include "input.h"
 #include "stk.h"
+#include "update.h"
 
 static uint32_t tick_ms(void)
 {
@@ -39,6 +40,7 @@ int main(int argc, char **argv)
     api_init();
     input_init(display);
     shell_init();
+    update_init();
 
     struct pollfd fds[INPUT_MAX_DEVICES + 2];
     for (;;) {

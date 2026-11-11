@@ -4,7 +4,9 @@
 dir=/usr/libexec/e5-infoscreen
 plugins=/usr/share/e5-infoscreen/www/plugins
 rm -f $dir/ui $dir/switch-ui $dir/session.webkit /tmp/e5-stk.log /tmp/e5-stk.log.old
+rm -f /etc/e5-infoscreen/ui.backup
 uci -q delete e5-infoscreen.main.lock_keys
+uci -q delete e5-infoscreen.main.ui_update_auto
 # The web interface's SIM toolkit and speed test apps share the menus, the
 # sessions, the settings and the fetched speed test.
 if [ ! -e $plugins/stk ]; then

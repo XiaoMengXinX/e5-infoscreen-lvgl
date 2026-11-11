@@ -43,12 +43,13 @@ void test_screen_option(const char *name, char *out, size_t size)
 {
     snprintf(out, size, "%s", !strcmp(name, "esim_interface") ? interface_option : backend_option);
 }
-void test_screen_option_set(const char *name, const char *value)
+bool test_screen_option_set(const char *name, const char *value)
 {
     if (!strcmp(name, "esim_interface"))
         snprintf(interface_option, sizeof interface_option, "%s", value);
     else
         snprintf(backend_option, sizeof backend_option, "%s", value);
+    return true;
 }
 void lpac_stop(void) { stops++; }
 void lpac_cancel(void) { cancels++; }

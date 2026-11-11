@@ -357,11 +357,11 @@ void screen_option(const char *name, char *out, size_t size)
     uci_get(option, out, size);
 }
 
-void screen_option_set(const char *name, const char *value)
+bool screen_option_set(const char *name, const char *value)
 {
     char command[160];
     snprintf(command, sizeof command, "uci set e5-infoscreen.main.%s=%s && uci commit e5-infoscreen", name, value);
-    system(command);
+    return system(command) == 0;
 }
 
 void shared_option(const char *name, const char *plugin, const char *setting, char *out, size_t size)

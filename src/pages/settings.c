@@ -8,11 +8,13 @@
 
 #include "api.h"
 #include "app.h"
+#include "build_version.h"
 #include "keyboard.h"
 #include "modem_restart.h"
 #include "stk.h"
 #include "theme.h"
 #include "ui.h"
+#include "update.h"
 #include "util.h"
 #include "volkeys.h"
 
@@ -81,7 +83,8 @@ static const struct {
     {"reconnect", "refresh"}, {"modem_restart", "refresh"}, {"start", "battery"}, {"stop", "battery"}, {"full_once", "battery"},
     {"state", "info"}, {"timezone", "globe"}, {"clock_seconds", "clock"}, {"version", "info"}, {"built", "clock"},
     {"screen_version", "info"}, {"update_check", "refresh"}, {"update_apply", "download"},
-    {"update_rollback", "refresh"}, {"traffic_clear", "trash"}, {"clear_0", "trash"}, {"clear_1", "trash"},
+    {"update_rollback", "refresh"}, {"update_auto", "refresh"}, {"build_time", "clock"}, {"build_commit", "info"},
+    {"traffic_clear", "trash"}, {"clear_0", "trash"}, {"clear_1", "trash"},
     {"clear_all", "trash"}, {"next_boot", "power"}, {"default_boot", "power"}, {"reboot", "refresh"}, {"ui_restart", "refresh"}, {"ui_webkit", "globe"}, {"touch_reset", "touch"},
     {"poweroff", "power"}, {"android_once", "power"}, {"check", "search"}, {"diagnosis", "info"},
     {"wireless_error", "wifi"}, {"hardware_error", "chip"}, {"controller", "usb"}, {"host_address", "device"},
@@ -89,6 +92,7 @@ static const struct {
     {"usb_host_boot", "power"}, {"usb_net_current", "globe"}, {"usb_net_mode", "globe"},
     {"usb_net_scope", "clock"}, {"usb_net_auto", "check"}, {"usb_lan_auto", "device"}, {"name", "info"},
     {"maintainer", "user"}, {"copyright", "shield"}, {"license", "shield"}, {"control_slot", "simcard"},
+    {"screen_maintainer", "user"},
 };
 
 static const char *const page_icons[] = {"home", "signal", "traffic", "sms", "wifi", "device", "info", "settings", "apps"};
@@ -508,6 +512,30 @@ static void add_local_items(cJSON *items, const char *cat)
             cJSON_AddBoolToObject(touch, "confirm", true);
             cJSON_InsertItemInArray(items, item_index(items, "reboot"), touch);
         }
+    } else if (!strcmp(cat, "about")) {
+        cJSON *maintainer = local_item("screen_maintainer", "info", "信息屏维护者", "Screen maintainer", "", "");
+        cJSON_AddStringToObject(maintainer, "value", BUILD_MAINTAINER);
+        cJSON_InsertItemInArray(items, item_index(items, "maintainer"), maintainer);
+        char when[32], commit[16];
+        update_version_text(when, sizeof when, commit, sizeof commit);
+        cJSON *built = local_item("build_time", "info", "构建时间", "Built", "", "");
+        cJSON_AddStringToObject(built, "value", when);
+        cJSON_InsertItemInArray(items, item_index(items, "name") + 1, built);
+        cJSON *hash = local_item("build_commit", "info", "提交哈希", "Commit", "", "");
+        cJSON_AddStringToObject(hash, "value", commit);
+        cJSON_InsertItemInArray(items, item_index(items, "name") + 2, hash);
+        cJSON *check = local_item("update_check", "action", "检查更新", "Check for an update", "", "");
+        cJSON_InsertItemInArray(items, item_index(items, "name") + 3, check);
+        cJSON *auto_check = local_item("update_auto", "toggle", "自动检查更新", "Check automatically", "", "");
+        cJSON_AddBoolToObject(auto_check, "value", update_auto_enabled());
+        cJSON_InsertItemInArray(items, item_index(items, "name") + 4, auto_check);
+        if (update_backup_exists()) {
+            cJSON *rollback = local_item("update_rollback", "action", "回滚更新", "Roll the update back",
+                                         "恢复更新前的界面程序并重启",
+                                         "Restores the previous screen binary and restarts");
+            cJSON_AddBoolToObject(rollback, "confirm", true);
+            cJSON_InsertItemInArray(items, item_index(items, "name") + 5, rollback);
+        }
     }
 }
 
@@ -594,6 +622,25 @@ static void local_save(const cJSON *it, const cJSON *value)
     if (!strcmp(id, "stk_cache")) {
         stk_clear_cache();
         toast("%s", L("已清除，部分 SIM 卡需要重启设备才能重新读取 STK 菜单", "Cleared; some SIMs need a restart to send their STK menu"));
+        return;
+    }
+    if (!strcmp(id, "update_check")) {
+        update_check(true);
+        return;
+    }
+    if (!strcmp(id, "update_auto")) {
+        bool on = cJSON_IsTrue(value);
+        if (!update_set_auto(on)) {
+            toast("%s", L("保存失败", "Could not save"));
+            return;
+        }
+        cJSON_ReplaceItemInObject((cJSON *)it, "value", cJSON_CreateBool(on));
+        toast("%s", on ? L("已开启自动检查", "Automatic checks are on") : L("已关闭自动检查", "Automatic checks are off"));
+        render();
+        return;
+    }
+    if (!strcmp(id, "update_rollback")) {
+        update_rollback();
         return;
     }
     if (!strcmp(id, "ui_webkit")) {
@@ -895,6 +942,8 @@ static void render_cat(struct view *v)
         char key[96], label[256], value[512];
         snprintf(key, sizeof key, "item:%s", id);
         label_text(jget(it, "label"), label, sizeof label);
+        if (!strcmp(id, "maintainer"))
+            snprintf(label, sizeof label, "%s", L("系统维护者", "System maintainer"));
         /* The backend names the shared package; this UI is its LVGL rewrite. */
         if (!strcmp(id, "name"))
             snprintf(value, sizeof value, "e5-infoscreen-lvgl");

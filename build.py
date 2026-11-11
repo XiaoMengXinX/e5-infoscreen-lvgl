@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import urllib.request
 from pathlib import Path
 
@@ -63,6 +64,27 @@ def embedded_script(name):
     return 'static const char ' + name.upper() + '_SCRIPT[] =\n    ' + json.dumps(script) + ';\n'
 
 
+def version_info():
+    """The binary's build timestamp and commit, also published in version.json."""
+    commit = os.environ.get('GITHUB_SHA', '').strip()
+    if not commit:
+        try:
+            commit = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=HERE, check=True,
+                                    capture_output=True, text=True).stdout.strip()
+        except (OSError, subprocess.CalledProcessError):
+            commit = 'unknown'
+    epoch = os.environ.get('SOURCE_DATE_EPOCH')
+    return (int(epoch) if epoch else int(time.time())), commit
+
+
+def version_header(stamp, commit):
+    repo = os.environ.get('GITHUB_REPOSITORY', 'XiaoMengXinX/e5-infoscreen-lvgl')
+    with urllib.request.urlopen('https://api.github.com/repos/' + repo) as response:
+        maintainer = json.load(response)['owner']['login']
+    return (f'#define BUILD_TIMESTAMP {stamp}LL\n#define BUILD_COMMIT {json.dumps(commit)}\n'
+            f'#define BUILD_MAINTAINER {json.dumps(maintainer)}\n')
+
+
 def image():
     tag = 'e5-infoscreen-lvgl-build:' + hashlib.sha256(DOCKERFILE.encode()).hexdigest()[:12]
     if subprocess.run(['docker', 'image', 'inspect', tag], capture_output=True).returncode:
@@ -73,12 +95,14 @@ def image():
 
 def build():
     archives = {name: fetch(name) for name in SOURCES}
+    stamp, commit = version_info()
     gen = OUT / 'gen'
     gen.mkdir(parents=True, exist_ok=True)
     generated = {
         'platform_errors.h': platform_errors(),
         'modem_restart_script.h': embedded_script('modem_restart'),
         'lpac_bridge_script.h': embedded_script('lpac_bridge'),
+        'build_version.h': version_header(stamp, commit),
     }
     for name, content in generated.items():
         header = gen / name
@@ -99,6 +123,11 @@ def build():
     data = binary.read_bytes()
     if data[:6] != b'\x7fELF\x02\x01' or int.from_bytes(data[18:20], 'little') != 183:
         raise ValueError('Expected an arm64 ELF')
+    (OUT / 'version.json').write_text(json.dumps({
+        'build': stamp,
+        'commit': commit,
+        'sha256': hashlib.sha256(data).hexdigest(),
+    }, indent=2) + '\n', encoding='utf-8')
     return binary
 
 
