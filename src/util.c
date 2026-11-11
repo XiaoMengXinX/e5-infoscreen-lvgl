@@ -1,11 +1,16 @@
+#define _GNU_SOURCE
 #include "util.h"
 
 #include <ctype.h>
+#include <errno.h>
 #include <math.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/wait.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "app.h"
 #include "platform_errors.h"
@@ -357,11 +362,37 @@ void screen_option(const char *name, char *out, size_t size)
     uci_get(option, out, size);
 }
 
+static bool uci(char *const argv[])
+{
+    pid_t pid;
+    if (posix_spawnp(&pid, "uci", NULL, NULL, argv, environ))
+        return false;
+    int code;
+    while (waitpid(pid, &code, 0) < 0 && errno == EINTR) {
+    }
+    return WIFEXITED(code) && WEXITSTATUS(code) == 0;
+}
+
+/* Run without a shell: a value can be anything typed on the screen. */
 bool screen_option_set(const char *name, const char *value)
 {
-    char command[160];
-    snprintf(command, sizeof command, "uci set e5-infoscreen.main.%s=%s && uci commit e5-infoscreen", name, value);
-    return system(command) == 0;
+    char *assign = NULL;
+    if (asprintf(&assign, "e5-infoscreen.main.%s=%s", name, value) < 0)
+        return false;
+    bool ok = uci((char *[]){"uci", "set", assign, NULL}) && uci((char *[]){"uci", "commit", "e5-infoscreen", NULL});
+    free(assign);
+    return ok;
+}
+
+bool screen_option_clear(const char *name)
+{
+    char *option = NULL;
+    if (asprintf(&option, "e5-infoscreen.main.%s", name) < 0)
+        return false;
+    /* Deleting an option that is not set fails, and leaves it clear all the same. */
+    uci((char *[]){"uci", "-q", "delete", option, NULL});
+    free(option);
+    return uci((char *[]){"uci", "commit", "e5-infoscreen", NULL});
 }
 
 void shared_option(const char *name, const char *plugin, const char *setting, char *out, size_t size)

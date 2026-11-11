@@ -37,6 +37,7 @@ void usb_device_name(const cJSON *device, char *out, size_t size);
  * gives an empty string when it is not set. */
 void screen_option(const char *name, char *out, size_t size);
 bool screen_option_set(const char *name, const char *value);
+bool screen_option_clear(const char *name);
 /* A setting the web interface's plugin also has: its copy (e5-plugin-<plugin>.settings.<setting>)
  * when there is one, else the screen's own. */
 void shared_option(const char *name, const char *plugin, const char *setting, char *out, size_t size);
