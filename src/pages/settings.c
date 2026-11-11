@@ -530,9 +530,7 @@ static void add_local_items(cJSON *items, const char *cat)
         cJSON_AddBoolToObject(auto_check, "value", update_auto_enabled());
         cJSON_InsertItemInArray(items, item_index(items, "name") + 4, auto_check);
         if (update_backup_exists()) {
-            cJSON *rollback = local_item("update_rollback", "action", "回滚更新", "Roll the update back",
-                                         "恢复更新前的界面程序并重启",
-                                         "Restores the previous screen binary and restarts");
+            cJSON *rollback = local_item("update_rollback", "action", "回滚更新", "Roll the update back", "", "");
             cJSON_AddBoolToObject(rollback, "confirm", true);
             cJSON_InsertItemInArray(items, item_index(items, "name") + 5, rollback);
         }
