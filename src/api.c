@@ -1,10 +1,9 @@
 #define _GNU_SOURCE
 #include "api.h"
 
-#include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <netinet/in.h>
+#include <netdb.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,11 +18,15 @@
 #define API_PORT 8088
 #define EVENTS_PORT 8089
 #define TIMEOUT_S 25
+#define LOOPBACK "127.0.0.1"
 
 struct request {
     struct request *next;
     const char *method;
+    char *host;
+    int port;
     char *path;
+    char *token;
     char *body;
     bool text;
     api_cb cb;
@@ -46,20 +49,25 @@ static struct {
     .ready = PTHREAD_COND_INITIALIZER,
 };
 
-static int tcp_connect(int port)
+/* host is a numeric IPv4 or IPv6 address. */
+static int tcp_connect(const char *host, int port)
 {
-    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0)
+    char service[8];
+    snprintf(service, sizeof service, "%d", port);
+    struct addrinfo hints = {.ai_socktype = SOCK_STREAM, .ai_flags = AI_NUMERICHOST | AI_NUMERICSERV}, *addr;
+    if (getaddrinfo(host, service, &hints, &addr))
         return -1;
-    struct timeval tv = {.tv_sec = TIMEOUT_S};
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-    struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(port),
-                               .sin_addr.s_addr = htonl(INADDR_LOOPBACK)};
-    if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
-        close(fd);
-        return -1;
+    int fd = socket(addr->ai_family, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd >= 0) {
+        struct timeval tv = {.tv_sec = TIMEOUT_S};
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+        if (connect(fd, addr->ai_addr, addr->ai_addrlen) < 0) {
+            close(fd);
+            fd = -1;
+        }
     }
+    freeaddrinfo(addr);
     return fd;
 }
 
@@ -77,18 +85,21 @@ static bool send_all(int fd, const char *data, size_t len)
     return true;
 }
 
-static char *http(const char *method, const char *path, const char *body, int *status)
+static char *http(const char *host, int port, const char *method, const char *path, const char *token,
+                  const char *body, int *status)
 {
     *status = 0;
-    int fd = tcp_connect(API_PORT);
+    int fd = tcp_connect(host, port);
     if (fd < 0)
         return NULL;
     size_t body_len = body ? strlen(body) : 0;
+    bool ipv6 = strchr(host, ':');
     char *head = NULL;
     int head_len = asprintf(&head,
-                            "%s /api%s HTTP/1.0\r\nHost: 127.0.0.1:%d\r\nConnection: close\r\n"
+                            "%s %s HTTP/1.0\r\nHost: %s%s%s:%d\r\nConnection: close\r\n%s%s%s"
                             "Content-Type: application/json\r\nContent-Length: %zu\r\n\r\n",
-                            method, path, API_PORT, body_len);
+                            method, path, ipv6 ? "[" : "", host, ipv6 ? "]" : "", port,
+                            token ? "Authorization: Bearer " : "", token ? token : "", token ? "\r\n" : "", body_len);
     bool sent = head_len > 0 && send_all(fd, head, (size_t)head_len) && send_all(fd, body ? body : "", body_len);
     free(head);
     if (!sent) {
@@ -192,7 +203,8 @@ static void *worker(void *unused)
             q.todo_tail = &q.todo;
         pthread_mutex_unlock(&q.lock);
 
-        r->response = r->method ? http(r->method, r->path, r->body, &r->status) : ubus(r->path, r->body, &r->status);
+        r->response = r->method ? http(r->host, r->port, r->method, r->path, r->token, r->body, &r->status)
+                                : ubus(r->path, r->body, &r->status);
         if (r->response && !r->text)
             r->json = cJSON_Parse(r->response);
         finish(r);
@@ -230,7 +242,9 @@ static void deliver(struct request *r)
         r->cb(r->status, r->json, r->ctx);
     cJSON_Delete(r->json);
     free(r->response);
+    free(r->host);
     free(r->path);
+    free(r->token);
     free(r->body);
     free(r);
 }
@@ -261,25 +275,44 @@ static void submit(struct request *r)
     pthread_mutex_unlock(&q.lock);
 }
 
+static char *api_path(const char *path)
+{
+    char *full = NULL;
+    return asprintf(&full, "/api%s", path) < 0 ? NULL : full;
+}
+
 void api_get(const char *path, api_cb cb, void *ctx)
 {
     struct request *r = calloc(1, sizeof *r);
-    *r = (struct request){.method = "GET", .path = strdup(path), .cb = cb, .ctx = ctx};
+    *r = (struct request){.method = "GET", .host = strdup(LOOPBACK), .port = API_PORT, .path = api_path(path),
+                          .cb = cb, .ctx = ctx};
     submit(r);
 }
 
 void api_get_text(const char *path, api_text_cb cb, void *ctx)
 {
     struct request *r = calloc(1, sizeof *r);
-    *r = (struct request){.method = "GET", .path = strdup(path), .text = true, .text_cb = cb, .ctx = ctx};
+    *r = (struct request){.method = "GET", .host = strdup(LOOPBACK), .port = API_PORT, .path = api_path(path),
+                          .text = true, .text_cb = cb, .ctx = ctx};
     submit(r);
 }
 
 void api_post(const char *path, cJSON *body, api_cb cb, void *ctx)
 {
     struct request *r = calloc(1, sizeof *r);
-    *r = (struct request){.method = "POST", .path = strdup(path), .cb = cb, .ctx = ctx,
-                          .body = body ? cJSON_PrintUnformatted(body) : strdup("{}")};
+    *r = (struct request){.method = "POST", .host = strdup(LOOPBACK), .port = API_PORT, .path = api_path(path),
+                          .cb = cb, .ctx = ctx, .body = body ? cJSON_PrintUnformatted(body) : strdup("{}")};
+    cJSON_Delete(body);
+    submit(r);
+}
+
+void api_http(const char *host, int port, const char *method, const char *path, const char *token, cJSON *body,
+              api_cb cb, void *ctx)
+{
+    struct request *r = calloc(1, sizeof *r);
+    *r = (struct request){.method = method, .host = strdup(host), .port = port, .path = strdup(path),
+                          .cb = cb, .ctx = ctx, .token = token && *token ? strdup(token) : NULL,
+                          .body = body ? cJSON_PrintUnformatted(body) : NULL};
     cJSON_Delete(body);
     submit(r);
 }
@@ -328,7 +361,7 @@ static bool calls_payload(const cJSON *json)
 
 static void stream_events(void)
 {
-    int fd = tcp_connect(EVENTS_PORT);
+    int fd = tcp_connect(LOOPBACK, EVENTS_PORT);
     if (fd < 0)
         return;
     struct timeval tv = {0};
@@ -395,7 +428,7 @@ static void *events_thread(void *unused)
             stream_events();
         }
         int status;
-        char *body = http("GET", "/plugins/phone/live", NULL, &status);
+        char *body = http(LOOPBACK, API_PORT, "GET", "/api/plugins/phone/live", NULL, NULL, &status);
         cJSON *json = status == 200 && body ? cJSON_Parse(body) : NULL;
         free(body);
         if (calls_payload(json))
