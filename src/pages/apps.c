@@ -1,4 +1,5 @@
 #include "app.h"
+#include "clash.h"
 #include "esim.h"
 #include "input.h"
 #include "speedtest.h"
@@ -6,7 +7,7 @@
 #include "theme.h"
 #include "ui.h"
 
-static lv_obj_t *list, *speed, *toolkit, *toolkit_row, *esim;
+static lv_obj_t *list, *speed, *toolkit, *toolkit_row, *esim, *clash;
 /* The row the keys were on when an app opened over the list. */
 static lv_obj_t *list_focus;
 
@@ -32,10 +33,13 @@ static void show(lv_obj_t *view)
         stk_close();
     if (view != esim)
         esim_close();
+    if (view != clash)
+        clash_close();
     lv_obj_set_hidden(list, view != list);
     lv_obj_set_hidden(speed, view != speed);
     lv_obj_set_hidden(toolkit, view != toolkit);
     lv_obj_set_hidden(esim, view != esim);
+    lv_obj_set_hidden(clash, view != clash);
     if (view == list && list_focus) {
         lv_group_focus_obj(list_focus);
         lv_obj_add_state(list_focus, LV_STATE_FOCUS_KEY);
@@ -66,15 +70,21 @@ static void on_esim(lv_event_t *e)
     esim_open();
 }
 
+static void on_clash(lv_event_t *e)
+{
+    show(clash);
+    clash_open();
+}
+
 static void create(lv_obj_t *page)
 {
     list_focus = NULL;
     list = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
-    ui_row(list, "phone", L("电话", "Phone"), L("双卡拨号和来电", "Dual-SIM dialer and calls"), ROW_CHEVRON, on_phone,
-           NULL);
+    ui_row(list, "phone", L("电话", "Phone"), NULL, ROW_CHEVRON, on_phone, NULL);
     ui_row(list, "traffic", L("网速测试", "Speed test"), NULL, ROW_CHEVRON, on_speedtest, NULL);
     toolkit_row = ui_row(list, "simcard", L("SIM 卡应用", "SIM toolkit"), NULL, ROW_CHEVRON, on_toolkit, NULL);
     ui_row(list, "chip", L("eSIM 管理", "eSIM Manager"), NULL, ROW_CHEVRON, on_esim, NULL);
+    ui_row(list, "globe", L("Mihomo 面板", "Mihomo panel"), NULL, ROW_CHEVRON, on_clash, NULL);
     ui_row(list, "settings", L("电话设置", "Phone settings"), NULL, ROW_CHEVRON, on_phone_settings, NULL);
     speed = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
     /* The dial is sized for the panel; larger display sizes would push it off. */
@@ -87,6 +97,9 @@ static void create(lv_obj_t *page)
     esim = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
     esim_create(esim);
     lv_obj_set_hidden(esim, true);
+    clash = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
+    clash_create(clash);
+    lv_obj_set_hidden(clash, true);
     lv_obj_set_hidden(toolkit_row, !stk_enabled());
     lv_obj_set_hidden(speed, !speedtest_running());
     lv_obj_set_hidden(list, speedtest_running());
@@ -108,7 +121,8 @@ static bool back(void)
         return false;
     if (!lv_obj_is_hidden(speed) && speedtest_cancel())
         return true;
-    if ((lv_obj_is_hidden(esim) || !esim_back()) && (lv_obj_is_hidden(toolkit) || !stk_back()))
+    if ((lv_obj_is_hidden(esim) || !esim_back()) && (lv_obj_is_hidden(toolkit) || !stk_back()) &&
+        (lv_obj_is_hidden(clash) || !clash_back()))
         show(list);
     return true;
 }
@@ -131,6 +145,8 @@ static bool key(const struct key_event *k)
         return stk_key(k);
     if (!lv_obj_is_hidden(esim))
         return esim_key(k);
+    if (!lv_obj_is_hidden(clash))
+        return clash_key(k);
     return !lv_obj_is_hidden(speed) && (k->kind == KEY_KIND_LEFT || k->kind == KEY_KIND_RIGHT);
 }
 

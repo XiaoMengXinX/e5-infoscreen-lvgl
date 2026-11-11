@@ -26,6 +26,7 @@
 | `src/esim.c` | eSIM 管理：配置文件、下载前确认、自动通知上报、芯片详情、eSTK.me 多 SE 选择 |
 | `src/modem_restart.c` `src/modem_restart.py` | 信息屏内的基带重启流程：暂停控制通道、重置 CP、恢复 SIM 射频、网络设置和数据连接 |
 | `src/battery.c` | 电池详情：使用时长、预估续航、电量历史 |
+| `src/clash.c` `src/clash_find.c` | Mihomo 面板：经 Clash API 显示流量、核心状态和订阅，切换代理模式；从运行中的核心识别连接设置 |
 | `src/record.c` | 录屏：JPEG 编码的 QuickTime 视频 |
 | `src/pages/` | 概览、信号、流量、短信、热点、设备、详细信息、设置、应用 |
 | `src/font.c` | FreeType 字体，按需光栅化并缓存字形；从 `.ttc` 中选取 SC 字面 |
@@ -140,6 +141,26 @@ uninstall.bat                         # Windows
 失败时显示错误弹窗；`version.json`返回HTTP 404时结束检查并提示“更新信息不存在（HTTP 404）”。
 下载更新时显示实际下载百分比，下载校验后显示安装阶段并重启界面。
 
+## Mihomo 面板
+
+应用 → Mihomo 面板连接 Clash（如 mihomo）或 sing-box 的 Clash API。IP 地址、API 端口和控制密码在页面底部的
+「连接设置」中填写，保存在 `/etc/config/e5-infoscreen` 的 `clash_host`、`clash_port` 和 `clash_secret` 中；
+IP 地址支持 IPv4 和 IPv6，留空即本机 `127.0.0.1`。未填写端口时不连接并提示，「重置设置」清除这三项。
+
+「自动识别」从运行中的核心读取端口和密码，不区分插件（OpenClash、nikki、ShellCrash、homeproxy 等）：
+Clash 核心按命令行的 `-d`、`-f` 找到配置，读取顶层的 `external-controller` 和 `secret`，`-ext-ctl`、`-secret`
+参数优先；sing-box 读取 `run` 命令的 `-c` 文件或 `-C` 目录中的 `experimental.clash_api`。
+相对路径按核心进程的工作目录解析。控制接口只监听某个 IP 时填入该地址，监听全部地址或回环地址时留空。
+同时运行多个核心时弹窗选择，识别结果填入输入框，保存后生效。
+
+页面打开且亮屏时每秒读取 `/connections`，由上传、下载总量的变化计算速度，同时显示连接数；
+连接本机核心时，按端口找到核心进程，从 `/proc` 读取其内存占用（RSS）和运行时长；
+代理模式每 5 秒读取一次，可在规则、全局、直连之间切换，sing-box 只开放其 `mode-list` 中的模式。
+按键聚焦模式一行后，左右键切换模式。「断开全部连接」调用 `DELETE /connections`。
+
+「订阅信息」列出 `/providers/proxies` 中通过 HTTP 获取的代理集合，显示已用流量、到期时间、节点数和更新时间，
+可逐个更新（`PUT /providers/proxies/{名称}`）。sing-box 没有代理集合接口，不显示此入口。
+
 ## 截图与录屏
 
 同时按下音量加减键截图，写入 `/tmp/screen.png`；`kill -USR1 $(pidof ui)` 效果相同。
@@ -149,7 +170,7 @@ uninstall.bat                         # Windows
 
 ## 范围
 
-应用页提供电话及其设置（来电铃声、震动、亮屏）、网速测试和 SIM 卡应用。第三方网页插件和应用商店尚未接入。
+应用页提供电话及其设置（来电铃声、震动、亮屏）、网速测试、SIM 卡应用、eSIM 管理和 Mihomo 面板。第三方网页插件和应用商店尚未接入。
 
 ## 许可
 
