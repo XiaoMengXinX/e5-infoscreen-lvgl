@@ -55,7 +55,8 @@ python3 build.py
 并生成 `out/version.json`，其中包含 `build`、`commit` 和程序的 `sha256`。
 设置 `SOURCE_DATE_EPOCH` 可以固定时间戳；CI 使用 `GITHUB_SHA` 作为 commit。
 构建时通过GitHub仓库API读取owner账号，作为信息屏维护者编进程序；仓库由`GITHUB_REPOSITORY`
-指定，默认为`XiaoMengXinX/e5-infoscreen-lvgl`。关于页同时显示信息屏维护者和系统API提供的系统维护者。
+指定，默认为`XiaoMengXinX/e5-infoscreen-lvgl`。设置`LVGL_MAINTAINER`时直接使用该账号，不请求API，
+适合频繁本地构建。关于页同时显示信息屏维护者和系统API提供的系统维护者。
 
 回归检查运行 `python3 tools/check.py`，覆盖翻页事件、慢帧调度和动画时间步，见 [tests/README.md](tests/README.md)。
 

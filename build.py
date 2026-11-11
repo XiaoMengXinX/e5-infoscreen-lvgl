@@ -78,9 +78,11 @@ def version_info():
 
 
 def version_header(stamp, commit):
-    repo = os.environ.get('GITHUB_REPOSITORY', 'XiaoMengXinX/e5-infoscreen-lvgl')
-    with urllib.request.urlopen('https://api.github.com/repos/' + repo) as response:
-        maintainer = json.load(response)['owner']['login']
+    maintainer = os.environ.get('LVGL_MAINTAINER', '').strip()
+    if not maintainer:
+        repo = os.environ.get('GITHUB_REPOSITORY', 'XiaoMengXinX/e5-infoscreen-lvgl')
+        with urllib.request.urlopen('https://api.github.com/repos/' + repo) as response:
+            maintainer = json.load(response)['owner']['login']
     return (f'#define BUILD_TIMESTAMP {stamp}LL\n#define BUILD_COMMIT {json.dumps(commit)}\n'
             f'#define BUILD_MAINTAINER {json.dumps(maintainer)}\n')
 
