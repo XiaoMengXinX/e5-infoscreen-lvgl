@@ -350,17 +350,6 @@ static void on_chart_touch(lv_event_t *e)
     lv_obj_invalidate(ui.chart);
 }
 
-static void figure(lv_obj_t *parent, const char *title, lv_obj_t **value, lv_obj_t **note)
-{
-    lv_obj_t *col = ui_box(parent, LV_FLEX_FLOW_COLUMN, 2);
-    lv_obj_set_width(col, 0);
-    lv_obj_set_flex_grow(col, 1);
-    lv_label_set_text(ui_text(col, 11, false, theme.dim), title);
-    *value = ui_text(col, 16, true, theme.text);
-    lv_label_set_text_static(*value, "—");
-    *note = ui_text(col, 10, false, theme.dim);
-}
-
 void battery_create(lv_obj_t *parent, lv_obj_t *home)
 {
     memset(&ui, 0, sizeof ui);
@@ -383,8 +372,8 @@ void battery_create(lv_obj_t *parent, lv_obj_t *home)
 
     lv_obj_t *figures = ui_card(ui.view);
     lv_obj_set_flex_flow(figures, LV_FLEX_FLOW_ROW);
-    figure(figures, L("电池使用时间", "On battery"), &ui.time, &ui.time_note);
-    figure(figures, L("预估续航", "Estimated"), &ui.estimate, &ui.estimate_note);
+    ui_figure(figures, L("电池使用时间", "On battery"), &ui.time, &ui.time_note);
+    ui_figure(figures, L("预估续航", "Estimated"), &ui.estimate, &ui.estimate_note);
 
     lv_obj_t *history = ui_card(ui.view);
     lv_label_set_text(ui_text(history, 13, true, theme.text), L("电池历史", "History"));

@@ -1399,28 +1399,14 @@ static void field(const char *name, const char *label, int max, bool password, c
     struct view *v = top();
     lv_obj_t *box = ui_box(body, LV_FLEX_FLOW_COLUMN, 4);
     lv_label_set_text(ui_text(box, 12, false, theme.dim), label);
-    lv_obj_t *ta = lv_textarea_create(box);
-    lv_obj_set_width(ta, LV_PCT(100));
-    lv_textarea_set_one_line(ta, true);
-    lv_textarea_set_max_length(ta, (uint32_t)max);
+    lv_obj_t *ta = ui_field(box, (uint32_t)max);
     lv_textarea_set_password_mode(ta, password);
-    lv_obj_set_style_text_font(ta, F(14), 0);
-    lv_obj_set_style_text_color(ta, theme.text, 0);
-    lv_obj_set_style_bg_color(ta, theme.surface, 0);
-    lv_obj_set_style_bg_opa(ta, theme.surface_opa, 0);
-    lv_obj_set_style_border_color(ta, theme.line, 0);
-    lv_obj_set_style_border_color(ta, theme.accent, LV_STATE_FOCUSED);
-    lv_obj_set_style_border_width(ta, 1, 0);
-    lv_obj_set_style_radius(ta, S(10), 0);
-    lv_obj_set_style_pad_all(ta, S(8), 0);
     if (placeholder)
         lv_textarea_set_placeholder_text(ta, placeholder);
     lv_textarea_set_text(ta, jstr_or(v->draft, name, ""));
     lv_obj_set_user_data(ta, (void *)name);
     lv_obj_add_event_cb(ta, on_field, LV_EVENT_VALUE_CHANGED, NULL);
-    keyboard_bind(ta);
     lv_obj_set_state(ta, LV_STATE_DISABLED, stack[depth - 2].saving);
-    ui_focusable(ta);
 }
 
 static void choices(const char *name, const char *label, const char *const options[][2], int count)

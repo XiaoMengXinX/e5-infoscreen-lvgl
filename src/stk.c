@@ -1469,26 +1469,12 @@ static void render(void)
     case V_INPUT: {
         if (*m->text)
             message(m->text);
-        ui.field = lv_textarea_create(ui.body);
-        lv_obj_set_width(ui.field, LV_PCT(100));
-        lv_textarea_set_one_line(ui.field, true);
-        lv_textarea_set_max_length(ui.field, (uint32_t)LV_MAX(m->max, 1));
+        ui.field = ui_field(ui.body, (uint32_t)LV_MAX(m->max, 1));
         lv_textarea_set_password_mode(ui.field, m->details[2] & 0x04);
         if (!(m->details[2] & 0x01))
             lv_textarea_set_accepted_chars(ui.field, "0123456789*#+");
         lv_textarea_set_text(ui.field, m->fill);
-        lv_obj_set_style_text_font(ui.field, F(14), 0);
-        lv_obj_set_style_text_color(ui.field, theme.text, 0);
-        lv_obj_set_style_bg_color(ui.field, theme.surface, 0);
-        lv_obj_set_style_bg_opa(ui.field, theme.surface_opa, 0);
-        lv_obj_set_style_border_color(ui.field, theme.line, 0);
-        lv_obj_set_style_border_color(ui.field, theme.accent, LV_STATE_FOCUSED);
-        lv_obj_set_style_border_width(ui.field, 1, 0);
-        lv_obj_set_style_radius(ui.field, S(10), 0);
-        lv_obj_set_style_pad_all(ui.field, S(8), 0);
         lv_obj_add_event_cb(ui.field, on_typed, LV_EVENT_VALUE_CHANGED, NULL);
-        keyboard_bind(ui.field);
-        ui_focusable(ui.field);
         buttons(L("确定", "OK"), on_ok, 0, NULL, 0);
         break;
     }

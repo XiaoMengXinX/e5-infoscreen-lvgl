@@ -33,12 +33,17 @@ lv_obj_t *ui_heading(lv_obj_t *parent, const char *text);
 lv_obj_t *ui_row(lv_obj_t *parent, const char *icon, const char *label, const char *value, unsigned flags,
                  lv_event_cb_t cb, void *ctx);
 struct ui_meter ui_meter(lv_obj_t *parent, const char *title);
+/* One of the equal columns in a row: a title, a large value and a note under it. */
+void ui_figure(lv_obj_t *parent, const char *title, lv_obj_t **value, lv_obj_t **note);
 
 void ui_set_text(lv_obj_t *label, const char *text);
 void ui_set_fmt(lv_obj_t *label, const char *fmt, ...);
 void ui_button_text(lv_obj_t *button, const char *text);
 void ui_meter_set(struct ui_meter *meter, const char *text, int percent, lv_color_t color);
 void ui_focusable(lv_obj_t *obj);
+/* A one-line text field with the on-screen keyboard; max 0 is unlimited. Set its
+ * text after any accepted characters, which filter it. */
+lv_obj_t *ui_field(lv_obj_t *parent, uint32_t max);
 /* Fills a ui_button with the accent color as the main action. */
 void ui_primary(lv_obj_t *button);
 /* Fills a ui_button with the danger color as the destructive action. */

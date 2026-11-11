@@ -425,28 +425,10 @@ static void root(void)
     ui_row(list, "bell", L("通知", "Notifications"), count, ROW_CHEVRON, on_notifs, NULL);
 }
 
-static void bind(lv_obj_t *area)
-{
-    keyboard_bind(area);
-    ui_focusable(area);
-}
-
 static lv_obj_t *textarea(lv_obj_t *parent, uint32_t max, const char *text)
 {
-    lv_obj_t *area = lv_textarea_create(parent);
-    lv_obj_set_width(area, LV_PCT(100));
-    lv_textarea_set_one_line(area, true);
-    lv_textarea_set_max_length(area, max);
+    lv_obj_t *area = ui_field(parent, max);
     lv_textarea_set_text(area, text);
-    lv_obj_set_style_text_font(area, F(14), 0);
-    lv_obj_set_style_text_color(area, theme.text, 0);
-    lv_obj_set_style_bg_color(area, theme.surface, 0);
-    lv_obj_set_style_bg_opa(area, theme.surface_opa, 0);
-    lv_obj_set_style_border_color(area, theme.line, 0);
-    lv_obj_set_style_border_color(area, theme.accent, LV_STATE_FOCUSED);
-    lv_obj_set_style_border_width(area, 1, 0);
-    lv_obj_set_style_radius(area, S(10), 0);
-    lv_obj_set_style_pad_all(area, S(8), 0);
     return area;
 }
 
@@ -485,13 +467,11 @@ static void download(void)
     lv_obj_t *activation = textarea(box, 0, state.activation ? state.activation : "");
     lv_textarea_set_placeholder_text(activation, "LPA:1$…");
     lv_obj_add_event_cb(activation, on_activation, LV_EVENT_VALUE_CHANGED, NULL);
-    bind(activation);
     box = ui_box(ui.body, LV_FLEX_FLOW_COLUMN, 4);
     lv_label_set_text(ui_text(box, 12, false, theme.dim),
                       L("确认码（可选）", "Confirmation code (optional)"));
     lv_obj_t *confirmation = textarea(box, 0, state.confirmation ? state.confirmation : "");
     lv_obj_add_event_cb(confirmation, on_confirmation, LV_EVENT_VALUE_CHANGED, NULL);
-    bind(confirmation);
     lv_obj_t *row = ui_box(ui.body, LV_FLEX_FLOW_ROW, 8);
     lv_obj_t *button = ui_button(row, L("下载", "Download"), on_start_download, NULL);
     ui_primary(button);
@@ -505,7 +485,6 @@ static void renaming(void)
     lv_label_set_text(ui_text(box, 12, false, theme.dim), L("名称", "Name"));
     lv_obj_t *area = textarea(box, NAME_CHARS, state.name);
     lv_obj_add_event_cb(area, on_name, LV_EVENT_VALUE_CHANGED, NULL);
-    bind(area);
     lv_obj_t *row = ui_box(ui.body, LV_FLEX_FLOW_ROW, 8);
     lv_obj_t *button = ui_button(row, L("保存", "Save"), on_save, NULL);
     ui_primary(button);

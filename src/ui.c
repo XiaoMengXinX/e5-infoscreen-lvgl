@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "icons.h"
+#include "keyboard.h"
 #include "theme.h"
 
 static void bare(lv_obj_t *obj)
@@ -120,6 +121,38 @@ void ui_primary(lv_obj_t *button)
 void ui_danger(lv_obj_t *button)
 {
     fill_button(button, theme.danger, theme.text);
+}
+
+void ui_figure(lv_obj_t *parent, const char *title, lv_obj_t **value, lv_obj_t **note)
+{
+    lv_obj_t *col = ui_box(parent, LV_FLEX_FLOW_COLUMN, 2);
+    lv_obj_set_width(col, 0);
+    lv_obj_set_flex_grow(col, 1);
+    lv_label_set_text(ui_text(col, 11, false, theme.dim), title);
+    *value = ui_text(col, 16, true, theme.text);
+    lv_label_set_text_static(*value, "—");
+    *note = ui_text(col, 10, false, theme.dim);
+}
+
+lv_obj_t *ui_field(lv_obj_t *parent, uint32_t max)
+{
+    lv_obj_t *area = lv_textarea_create(parent);
+    lv_obj_set_width(area, LV_PCT(100));
+    lv_textarea_set_one_line(area, true);
+    lv_textarea_set_max_length(area, max);
+    lv_obj_set_style_text_font(area, F(14), 0);
+    lv_obj_set_style_text_color(area, theme.text, 0);
+    lv_obj_set_style_text_color(area, theme.dim, LV_PART_TEXTAREA_PLACEHOLDER);
+    lv_obj_set_style_bg_color(area, theme.surface, 0);
+    lv_obj_set_style_bg_opa(area, theme.surface_opa, 0);
+    lv_obj_set_style_border_color(area, theme.line, 0);
+    lv_obj_set_style_border_color(area, theme.accent, LV_STATE_FOCUSED);
+    lv_obj_set_style_border_width(area, 1, 0);
+    lv_obj_set_style_radius(area, S(10), 0);
+    lv_obj_set_style_pad_all(area, S(8), 0);
+    keyboard_bind(area);
+    ui_focusable(area);
+    return area;
 }
 
 void ui_focusable(lv_obj_t *obj)
