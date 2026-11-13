@@ -697,7 +697,7 @@ void shell_title(void)
 static void spinner_show(lv_timer_t *t)
 {
     lv_timer_pause(spinner_timer);
-    lv_obj_set_hidden(ui.spinner, !(loading[app.page] > 0 && !load_failed[app.page]));
+    ui_spinner_show(ui.spinner, loading[app.page] > 0 && !load_failed[app.page]);
 }
 
 static void paint_load(void)
@@ -709,7 +709,7 @@ static void paint_load(void)
         }
     } else {
         lv_timer_pause(spinner_timer);
-        lv_obj_set_hidden(ui.spinner, true);
+        ui_spinner_show(ui.spinner, false);
     }
     for (int i = 0; i < PAGE_COUNT; i++)
         if (ui.errors[i])
@@ -1842,14 +1842,8 @@ static void build_toolbar(void)
     lv_obj_set_style_pad_hor(ui.title, 8, 0);
     lv_label_set_long_mode(ui.title, LV_LABEL_LONG_MODE_DOTS);
     lv_obj_set_flex_grow(ui.title, 1);
-    ui.spinner = lv_spinner_create(ui.toolbar);
-    lv_obj_set_size(ui.spinner, 16, 16);
-    lv_obj_set_style_arc_width(ui.spinner, 2, 0);
-    lv_obj_set_style_arc_width(ui.spinner, 2, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(ui.spinner, lv_color_mix(theme.accent, theme.chrome, 51), 0);
-    lv_obj_set_style_arc_color(ui.spinner, theme.accent, LV_PART_INDICATOR);
+    ui.spinner = ui_spinner(ui.toolbar, 16, theme.chrome);
     lv_obj_set_style_margin_right(ui.spinner, 8, 0);
-    lv_obj_set_hidden(ui.spinner, true);
     tool_button(ui.toolbar, "lock", 40, on_lock);
     tool_button(ui.toolbar, "menu", 40, on_menu);
 }

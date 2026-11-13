@@ -254,13 +254,21 @@ static void open(lv_obj_t *ta)
         lv_obj_scroll_to_view_recursive(ta, LV_ANIM_ON);
 }
 
+/* The textarea re-reads the caret's blink duration on its label's style event. */
+static void reblink(lv_obj_t *ta)
+{
+    lv_obj_send_event(lv_textarea_get_label(ta), LV_EVENT_STYLE_CHANGED, NULL);
+}
+
 static void on_event(lv_event_t *e)
 {
     lv_obj_t *ta = lv_event_get_target_obj(e);
     lv_event_code_t code = lv_event_get_code(e);
     if (code == LV_EVENT_FOCUSED)
         open(ta);
-    else if ((code == LV_EVENT_READY || code == LV_EVENT_DEFOCUSED || code == LV_EVENT_DELETE) && ta == target)
+    if (code == LV_EVENT_DEFOCUSED)
+        reblink(ta);
+    if ((code == LV_EVENT_READY || code == LV_EVENT_DEFOCUSED || code == LV_EVENT_DELETE) && ta == target)
         keyboard_close();
 }
 
@@ -269,8 +277,12 @@ void keyboard_bind(lv_obj_t *textarea)
     lv_obj_set_style_border_side(textarea, LV_BORDER_SIDE_LEFT, LV_PART_CURSOR);
     lv_obj_set_style_border_width(textarea, 1, LV_PART_CURSOR);
     lv_obj_set_style_border_color(textarea, theme.accent, LV_PART_CURSOR);
-    lv_obj_set_style_anim_duration(textarea, 500, LV_PART_CURSOR);
+    /* The caret blinks only in the focused field: a blinking one keeps LVGL's
+     * animation timer ticking every refresh period for as long as it exists. */
+    lv_obj_set_style_anim_duration(textarea, 0, LV_PART_CURSOR);
+    lv_obj_set_style_anim_duration(textarea, 500, LV_PART_CURSOR | LV_STATE_FOCUSED);
     lv_obj_set_style_opa(textarea, LV_OPA_TRANSP, LV_PART_CURSOR);
     lv_obj_set_style_opa(textarea, LV_OPA_COVER, LV_PART_CURSOR | LV_STATE_FOCUSED);
     lv_obj_add_event_cb(textarea, on_event, LV_EVENT_ALL, NULL);
+    reblink(textarea);
 }

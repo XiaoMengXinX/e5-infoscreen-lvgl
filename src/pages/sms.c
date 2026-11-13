@@ -320,7 +320,7 @@ static void pull_to(int32_t target, uint32_t delay)
 
 static void pull_label(void)
 {
-    lv_obj_set_hidden(pull.spinner, !pull.refreshing);
+    ui_spinner_show(pull.spinner, pull.refreshing);
     ui_set_text(pull.label, pull.refreshing           ? L("正在刷新", "Refreshing")
                             : pull.offset >= PULL_ARM ? L("↑ 松开刷新", "↑ Release to refresh")
                                                       : L("↓ 下拉刷新", "↓ Pull to refresh"));
@@ -512,12 +512,7 @@ static void create(lv_obj_t *page)
     lv_obj_set_width(pull.hint, LV_SIZE_CONTENT);
     lv_obj_set_floating(pull.hint, true);
     lv_obj_set_hidden(pull.hint, true);
-    pull.spinner = lv_spinner_create(pull.hint);
-    lv_obj_set_size(pull.spinner, 14, 14);
-    lv_obj_set_style_arc_width(pull.spinner, 2, 0);
-    lv_obj_set_style_arc_width(pull.spinner, 2, LV_PART_INDICATOR);
-    lv_obj_set_style_arc_color(pull.spinner, lv_color_mix(theme.accent, theme.surface, 51), 0);
-    lv_obj_set_style_arc_color(pull.spinner, theme.accent, LV_PART_INDICATOR);
+    pull.spinner = ui_spinner(pull.hint, 14, theme.surface);
     pull.label = ui_text(pull.hint, 12, false, theme.dim);
     lv_obj_add_event_cb(page, on_scroll, LV_EVENT_SCROLL, NULL);
     ui.list = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());

@@ -296,6 +296,29 @@ void ui_sim_tabs_paint(lv_obj_t *tabs, int current, bool keyed)
     }
 }
 
+/* The spinner's animation runs only while it shows: LVGL would otherwise keep
+ * ticking it every refresh period, waking the main loop with nothing to draw. */
+void ui_spinner_show(lv_obj_t *spinner, bool on)
+{
+    lv_obj_set_hidden(spinner, !on);
+    if (!on)
+        lv_anim_delete(spinner, NULL);
+    else if (!lv_anim_get(spinner, NULL))
+        lv_spinner_set_anim_params(spinner, lv_spinner_get_anim_duration(spinner), lv_spinner_get_arc_sweep(spinner));
+}
+
+lv_obj_t *ui_spinner(lv_obj_t *parent, int size, lv_color_t track)
+{
+    lv_obj_t *spinner = lv_spinner_create(parent);
+    lv_obj_set_size(spinner, size, size);
+    lv_obj_set_style_arc_width(spinner, 2, 0);
+    lv_obj_set_style_arc_width(spinner, 2, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(spinner, lv_color_mix(theme.accent, track, 51), 0);
+    lv_obj_set_style_arc_color(spinner, theme.accent, LV_PART_INDICATOR);
+    ui_spinner_show(spinner, false);
+    return spinner;
+}
+
 lv_obj_t *ui_note(lv_obj_t *parent, const char *text)
 {
     lv_obj_t *note = ui_text(parent, 10, false, theme.dim);

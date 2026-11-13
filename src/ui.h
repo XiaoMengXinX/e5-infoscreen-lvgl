@@ -62,6 +62,10 @@ void ui_primary(lv_obj_t *button);
 /* Fills a ui_button with the danger color as the destructive action. */
 void ui_danger(lv_obj_t *button);
 
+/* A small spinner, hidden and still until shown; track is the color behind it. */
+lv_obj_t *ui_spinner(lv_obj_t *parent, int size, lv_color_t track);
+void ui_spinner_show(lv_obj_t *spinner, bool on);
+
 /* The gap between the blocks of a list or a nested view, tighter when compact. */
 int ui_stack_gap(void);
 

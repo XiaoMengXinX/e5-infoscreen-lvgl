@@ -25,12 +25,17 @@ static struct {
     uint32_t crtc, connector;
     struct drm_mode_modeinfo mode;
     struct buffer buffers[3];
-    uint8_t *render[2];
+    uint8_t *render;
     const uint8_t *shown;
     uint32_t shown_pitch;
     int front;
     int ready;
     const uint8_t *ready_pixels;
+    /* The buffer taking the frame being flushed, -1 between frames. */
+    int writing;
+    /* What each buffer has missed of the frames drawn since it was last written. */
+    lv_area_t damage[3];
+    bool damaged[3];
     bool pending;
     bool slow;
     uint32_t draw_at;
@@ -38,7 +43,7 @@ static struct {
     uint64_t serial;
     double period_ms;
     uint32_t frames;
-} drm = {.fd = -1, .ready = -1};
+} drm = {.fd = -1, .ready = -1, .writing = -1};
 
 static void present_ready(void);
 
@@ -221,15 +226,46 @@ static void present_ready(void)
     drm.ready = -1;
 }
 
+static void copy_area(int index, const lv_area_t *area, const uint8_t *pixels)
+{
+    struct buffer *b = &drm.buffers[index];
+    size_t offset = (size_t)area->x1 * 4, bytes = (size_t)(area->x2 - area->x1 + 1) * 4;
+    for (int32_t y = area->y1; y <= area->y2; y++)
+        memcpy(b->map + (size_t)y * b->pitch + offset, pixels + (size_t)y * b->pitch + offset, bytes);
+}
+
+/* One area LVGL has drawn; the last of a frame is marked. The render buffer
+ * holds the whole frame, so the buffer taking it first catches up on the areas
+ * it missed while the other two took the frames in between. */
 static void flush(lv_display_t *display, const lv_area_t *area, uint8_t *pixels)
 {
-    if (lv_display_flush_is_last(display)) {
+    if (drm.writing < 0) {
         if (drm.pending)
             drm_display_dispatch();
         /* Of the three buffers, this one is neither on screen nor on its way there. */
-        int back = (drm.front + 1) % 3;
-        memcpy(drm.buffers[back].map, pixels, (size_t)drm.buffers[back].pitch * drm.mode.vdisplay);
-        drm.ready = back;
+        drm.writing = (drm.front + 1) % 3;
+        if (drm.damaged[drm.writing])
+            copy_area(drm.writing, &drm.damage[drm.writing], pixels);
+        drm.damaged[drm.writing] = false;
+    }
+    copy_area(drm.writing, area, pixels);
+    for (int i = 0; i < 3; i++) {
+        if (i == drm.writing)
+            continue;
+        lv_area_t *d = &drm.damage[i];
+        if (drm.damaged[i]) {
+            d->x1 = LV_MIN(d->x1, area->x1);
+            d->y1 = LV_MIN(d->y1, area->y1);
+            d->x2 = LV_MAX(d->x2, area->x2);
+            d->y2 = LV_MAX(d->y2, area->y2);
+        } else {
+            *d = *area;
+            drm.damaged[i] = true;
+        }
+    }
+    if (lv_display_flush_is_last(display)) {
+        drm.ready = drm.writing;
+        drm.writing = -1;
         drm.ready_pixels = pixels;
         drm.slow = lv_tick_elaps(drm.draw_at) >= drm.period_ms;
         present_ready();
@@ -255,20 +291,20 @@ lv_display_t *drm_display_create(const char *path)
         return NULL;
     }
     /* Frames are drawn in ordinary memory: the display's buffers are write-combined,
-     * and every pixel of a translucent card would cost an uncached read there. */
+     * and every pixel of a translucent card would cost an uncached read there. One
+     * buffer suffices, as a frame is copied out before the next is drawn. */
     size_t bytes = (size_t)drm.buffers[0].pitch * drm.mode.vdisplay;
-    for (int i = 0; i < 2; i++) {
-        drm.render[i] = malloc(bytes);
-        if (!drm.render[i]) {
-            perror("malloc");
-            return NULL;
-        }
-        memset(drm.render[i], 0, bytes);
+    drm.render = malloc(bytes);
+    if (!drm.render) {
+        perror("malloc");
+        return NULL;
     }
+    memset(drm.render, 0, bytes);
     lv_display_t *display = lv_display_create(drm.mode.hdisplay, drm.mode.vdisplay);
     lv_display_set_color_format(display, LV_COLOR_FORMAT_XRGB8888);
-    lv_display_set_buffers_with_stride(display, drm.render[1], drm.render[0], (uint32_t)bytes, drm.buffers[0].pitch,
-                                       LV_DISPLAY_RENDER_MODE_FULL);
+    /* Only the changed areas are drawn and copied. */
+    lv_display_set_buffers_with_stride(display, drm.render, NULL, (uint32_t)bytes, drm.buffers[0].pitch,
+                                       LV_DISPLAY_RENDER_MODE_DIRECT);
     lv_display_set_flush_cb(display, flush);
     drm.period_ms = mode_period(&drm.mode);
     lv_display_add_event_cb(display, frame_start, LV_EVENT_REFR_START, NULL);

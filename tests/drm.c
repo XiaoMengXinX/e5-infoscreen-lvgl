@@ -35,7 +35,8 @@ static bool readable;
 
 uint32_t mock_tick(void) { return now; }
 uint32_t mock_elaps(uint32_t previous) { return now - previous; }
-bool mock_is_last(lv_display_t *display) { return true; }
+static bool last = true;
+bool mock_is_last(lv_display_t *display) { return last; }
 void mock_ready(lv_display_t *display) { ready++; }
 
 int mock_ioctl(int fd, int request, ...)
@@ -79,10 +80,12 @@ static void complete(uint64_t serial)
     drm_display_dispatch();
 }
 
+static const lv_area_t full = {0, 0, 3, 0};
+
 static void draw_frame(uint8_t *pixels)
 {
     drm.draw_at = now;
-    flush(NULL, NULL, pixels);
+    flush(NULL, &full, pixels);
 }
 
 int main(void)
@@ -143,13 +146,13 @@ int main(void)
 
     drm.draw_at = now;
     now += 25;
-    flush(NULL, NULL, pixels);
+    flush(NULL, &full, pixels);
     assert(drm.slow && drm.frames == 5 && drm_display_can_draw() && drm_display_wait() == 100);
     int queued = drm.front;
     drm.draw_at = now;
     now += 25;
     pixels[0] = 0x11;
-    flush(NULL, NULL, pixels);
+    flush(NULL, &full, pixels);
     assert(drm.front == queued && drm.ready != queued && drm.ready >= 0 && drm.frames == 5);
     assert(!drm_display_can_draw() && drm_display_wait() > 0);
     complete(5);
@@ -158,6 +161,37 @@ int main(void)
     draw_frame(pixels);
     assert(!drm.slow && drm_display_wait() > 0);
     complete(7);
+
+    /* Partial frames: a buffer catches up on what the frames before it changed. */
+    uint8_t frame[16];
+    memcpy(frame, pixels, sizeof frame);
+    const lv_area_t px0 = {0, 0, 0, 0}, px1 = {1, 0, 1, 0}, px2 = {2, 0, 2, 0}, px3 = {3, 0, 3, 0};
+    memset(frame, 0xa0, 4);
+    flush(NULL, &px0, frame);
+    int w0 = drm.front;
+    complete(8);
+    memset(frame + 4, 0xb0, 4);
+    flush(NULL, &px1, frame);
+    int w1 = drm.front;
+    complete(9);
+    /* Two areas in one frame: only the last presents. */
+    memset(frame + 8, 0xc0, 4);
+    last = false;
+    flush(NULL, &px2, frame);
+    assert(drm.front == w1 && drm.ready < 0 && drm.writing >= 0);
+    last = true;
+    memset(frame + 12, 0xd0, 4);
+    flush(NULL, &px3, frame);
+    int w2 = drm.front;
+    assert(w2 != w1 && w2 != w0 && drm.writing < 0 && drm.pending);
+    assert(!memcmp(maps[w2], frame, 16));
+    assert(!memcmp(maps[w1], frame, 8) && !memcmp(maps[w1] + 8, pixels + 8, 8));
+    assert(!memcmp(maps[w0], frame, 4) && !memcmp(maps[w0] + 4, pixels + 4, 12));
+    complete(10);
+    memset(frame, 0xe0, 4);
+    flush(NULL, &px0, frame);
+    assert(drm.front == w0 && !memcmp(maps[w0], frame, 16));
+    complete(11);
 
     struct drm_mode_modeinfo mode = {.clock = 9000, .htotal = 300, .vtotal = 500};
     assert(fabs(mode_period(&mode) - 1000.0 / 60) < .000001);
@@ -171,5 +205,6 @@ int main(void)
     mode.clock = 0;
     mode.vrefresh = 50;
     assert(mode_period(&mode) == 20);
-    puts("DRM: completion ordering, stale events, timeout rollover, buffer ownership and mode timing passed");
+    puts("DRM: completion ordering, stale events, timeout rollover, buffer ownership, partial frames and mode timing "
+         "passed");
 }
