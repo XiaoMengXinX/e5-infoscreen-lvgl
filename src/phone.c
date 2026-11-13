@@ -1004,12 +1004,6 @@ void phone_close(void)
     idle_reset();
 }
 
-static void focus(lv_obj_t *obj)
-{
-    lv_group_focus_obj(obj);
-    lv_obj_add_state(obj, LV_STATE_FOCUS_KEY);
-}
-
 bool phone_key(const struct key_event *key)
 {
     const cJSON *c = current();
@@ -1040,12 +1034,8 @@ bool phone_key(const struct key_event *key)
     if (ui.sheet) {
         if (key->kind == KEY_KIND_BACK)
             on_sheet_close(NULL);
-        else if (key->kind == KEY_KIND_UP || key->kind == KEY_KIND_LEFT)
-            input_focus_move(group, -1);
-        else if (key->kind == KEY_KIND_DOWN || key->kind == KEY_KIND_RIGHT)
-            input_focus_move(group, 1);
-        else if (key->kind == KEY_KIND_OK)
-            input_focus_key(LV_KEY_ENTER);
+        else
+            input_modal_key(group, key);
         return true;
     }
     switch (key->kind) {
@@ -1083,17 +1073,17 @@ bool phone_key(const struct key_event *key)
         return true;
     case KEY_KIND_UP:
         if (!c && !input_key_focus(group))
-            focus(ui.sims[card]);
+            ui_focus_key(ui.sims[card]);
         else
             input_focus_toward(group, 0, -1);
         return true;
     case KEY_KIND_DOWN: {
         lv_obj_t *focused = input_key_focus(group);
         if (!c && !focused)
-            focus(lv_obj_get_child(ui.pad, 0));
+            ui_focus_key(lv_obj_get_child(ui.pad, 0));
         /* From * 0 and # the dial key is the way down, whichever is nearer. */
         else if (!c && lv_obj_get_parent(focused) == ui.pad && lv_obj_get_index(focused) >= 9)
-            focus(ui.dial);
+            ui_focus_key(ui.dial);
         else
             input_focus_toward(group, 0, 1);
         return true;

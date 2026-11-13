@@ -1,46 +1,25 @@
 #include "install.h"
 
-#include <errno.h>
-#include <fcntl.h>
-#include <pty.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 #include "app.h"
+#include "child.h"
 #include "theme.h"
 #include "ui.h"
 
 static struct {
     lv_obj_t *step, *button;
     struct ui_meter meter;
-    pid_t pid;
-    int fd;
-    char line[512];
-    size_t len;
+    struct child child;
     bool open;
     void (*done)(void);
-} install = {.pid = -1, .fd = -1};
+} install;
 
-static lv_timer_t *reader;
-
-static int reap(void)
+static void exited(int status)
 {
-    int status = 0;
-    close(install.fd);
-    install.fd = -1;
-    while (waitpid(install.pid, &status, 0) < 0 && errno == EINTR) {
-    }
-    install.pid = -1;
-    return status;
-}
-
-static void finish(void)
-{
-    int status = reap();
     if (WIFEXITED(status) && WEXITSTATUS(status) == 0) {
         void (*done)(void) = install.done;
         install.done = NULL;
@@ -53,18 +32,9 @@ static void finish(void)
     ui_button_text(install.button, L("关闭", "Close"));
 }
 
-static void stop_script(void)
-{
-    kill(-install.pid, SIGKILL);
-    lv_timer_delete(reader);
-    reader = NULL;
-    reap();
-}
-
 void install_cancel(void)
 {
-    if (install.pid >= 0)
-        stop_script();
+    child_kill(&install.child);
     install.done = NULL;
     if (!install.open)
         return;
@@ -74,7 +44,7 @@ void install_cancel(void)
 
 bool install_running(void)
 {
-    return install.pid >= 0;
+    return child_running(&install.child);
 }
 
 static void install_progress(int percent)
@@ -119,44 +89,6 @@ static void install_line(const char *line)
     }
 }
 
-static void take_line(void)
-{
-    install.line[install.len] = 0;
-    install.len = 0;
-    if (*install.line)
-        install_line(install.line);
-}
-
-static void poll_output(lv_timer_t *t)
-{
-    /* A step can stay silent for a while; the screen stays up until the script ends. */
-    idle_reset();
-    char buf[1024];
-    for (;;) {
-        ssize_t n = read(install.fd, buf, sizeof buf);
-        if (n > 0) {
-            for (ssize_t i = 0; i < n; i++) {
-                if (buf[i] == '\r' || buf[i] == '\n')
-                    take_line();
-                else if (install.len < sizeof install.line - 1)
-                    install.line[install.len++] = buf[i];
-            }
-            continue;
-        }
-        if (n < 0 && errno == EINTR)
-            continue;
-        if (n < 0 && errno == EAGAIN)
-            return;
-        if (install.len)
-            take_line();
-        /* EOF, or EIO once the script has exited and closed the terminal. */
-        lv_timer_delete(t);
-        reader = NULL;
-        finish();
-        return;
-    }
-}
-
 static void on_close(lv_event_t *e)
 {
     dialog_close();
@@ -170,7 +102,7 @@ static void on_closed(void)
 void install_run(const char *title, const char *script, void (*done)(void))
 {
     dialog_open(title, NULL);
-    install = (typeof(install)){.pid = -1, .fd = -1, .done = done, .open = true};
+    install = (typeof(install)){.done = done, .open = true};
     lv_obj_t *sheet = dialog_sheet();
     install.step = ui_text(sheet, 13, false, theme.text);
     lv_obj_set_width(install.step, LV_PCT(100));
@@ -178,20 +110,8 @@ void install_run(const char *title, const char *script, void (*done)(void))
     install.meter = ui_meter(sheet, L("进度", "Progress"));
     install.button = dialog_button(L("取消", "Cancel"), on_close, NULL);
     dialog_on_close(on_closed);
-    int fd;
-    pid_t pid = forkpty(&fd, NULL, NULL, NULL);
-    if (pid < 0) {
+    if (!child_start(&install.child, (char *const[]){"/bin/sh", "-c", (char *)script, NULL}, install_line, exited)) {
         install_cancel();
         toast("%s", L("无法启动安装", "Cannot start the install"));
-        return;
     }
-    if (pid == 0) {
-        execl("/bin/sh", "sh", "-c", script, (char *)NULL);
-        _exit(127);
-    }
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-    fcntl(fd, F_SETFD, FD_CLOEXEC);
-    install.pid = pid;
-    install.fd = fd;
-    reader = lv_timer_create(poll_output, 50, NULL);
 }

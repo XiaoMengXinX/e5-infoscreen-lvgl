@@ -33,7 +33,7 @@ struct slot {
 static const char *const se_aids[] = {"A06573746B6D65FFFF4953442D522030", "A06573746B6D65FFFF4953442D522031"};
 
 static struct {
-    lv_obj_t *root, *body, *switcher, *tabs[2], *se_switcher, *interfaces[2], *notif_actions, *notif_list;
+    lv_obj_t *root, *body, *switcher, *se_switcher, *interfaces[2], *notif_actions, *notif_list;
 } ui;
 
 static struct {
@@ -583,13 +583,9 @@ static void paint_switcher(void)
     /* Actions, forms and reloads finish in the slot they started in, and their
      * callbacks keep writing to state.current. */
     bool switchable = state.view == V_ROOT || state.view == V_NOTIFS;
-    for (int c = 0; c < 2; c++) {
-        lv_obj_set_style_bg_opa(ui.tabs[c], c == state.current ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-        lv_obj_set_style_text_color(lv_obj_get_child(ui.tabs[c], 0),
-                                    c == state.current ? theme.accent : theme.dim, 0);
-        lv_obj_set_state(ui.tabs[c], LV_STATE_DISABLED, !switchable);
-        lv_obj_set_state(ui.tabs[c], LV_STATE_FOCUS_KEY, on_switcher && switchable && c == state.current);
-    }
+    ui_sim_tabs_paint(ui.switcher, state.current, on_switcher && switchable);
+    for (int32_t c = 0; c < 2; c++)
+        lv_obj_set_state(lv_obj_get_child(ui.switcher, c), LV_STATE_DISABLED, !switchable);
 }
 
 static void render(void)
@@ -613,8 +609,7 @@ static void render(void)
         root();
         ui_row(ui.body, "settings", L("高级设置", "Advanced settings"), NULL, ROW_CHEVRON, on_interface, NULL);
         if (restore_se_focus && ui.se_switcher) {
-            lv_group_focus_obj(ui.se_switcher);
-            lv_obj_add_state(ui.se_switcher, LV_STATE_FOCUS_KEY);
+            ui_focus_key(ui.se_switcher);
             restore_se_focus = false;
         }
         break;
@@ -1321,21 +1316,7 @@ void esim_create(lv_obj_t *parent)
 {
     memset(&ui, 0, sizeof ui);
     ui.root = ui_box(parent, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
-    lv_obj_t *tabs = ui.switcher = ui_box(ui.root, LV_FLEX_FLOW_ROW, 0);
-    lv_obj_set_style_bg_color(tabs, theme.surface, 0);
-    lv_obj_set_style_bg_opa(tabs, theme.surface_opa, 0);
-    lv_obj_set_style_radius(tabs, S(18), 0);
-    lv_obj_set_style_pad_all(tabs, S(3), 0);
-    for (int c = 0; c < 2; c++) {
-        ui.tabs[c] = ui_button(tabs, c ? "SIM 2" : "SIM 1", on_tab, (void *)(intptr_t)c);
-        /* The keys reach the switcher only through Left and Right on it. */
-        lv_group_remove_obj(ui.tabs[c]);
-        lv_obj_set_flex_grow(ui.tabs[c], 1);
-        lv_obj_set_style_pad_ver(ui.tabs[c], S(5), 0);
-        lv_obj_set_style_radius(ui.tabs[c], S(15), 0);
-        lv_obj_set_style_bg_color(ui.tabs[c], theme.active, 0);
-        lv_obj_set_style_text_font(lv_obj_get_child(ui.tabs[c], 0), F(12), 0);
-    }
+    ui.switcher = ui_sim_tabs(ui.root, on_tab);
     ui.body = ui_box(ui.root, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
 }
 
@@ -1400,38 +1381,6 @@ bool esim_back(void)
     return false;
 }
 
-static bool inside(lv_obj_t *obj, lv_obj_t *parent)
-{
-    while (obj && obj != parent)
-        obj = lv_obj_get_parent(obj);
-    return obj != NULL;
-}
-
-/* The first (or last) entry the keys can reach under parent. */
-static lv_obj_t *end_entry(lv_obj_t *parent, bool last)
-{
-    uint32_t n = lv_obj_get_child_count(parent);
-    for (uint32_t i = 0; i < n; i++) {
-        lv_obj_t *child = lv_obj_get_child(parent, (int32_t)(last ? n - 1 - i : i));
-        if (lv_obj_is_hidden(child))
-            continue;
-        if (lv_obj_get_group(child) == input_group() && !lv_obj_has_state(child, LV_STATE_DISABLED))
-            return child;
-        if ((child = end_entry(child, last)))
-            return child;
-    }
-    return NULL;
-}
-
-static void focus_entry(lv_obj_t *entry)
-{
-    if (!entry)
-        return;
-    lv_group_focus_obj(entry);
-    lv_obj_add_state(entry, LV_STATE_FOCUS_KEY);
-    lv_obj_scroll_to_view_recursive(entry, LV_ANIM_ON);
-}
-
 /* The switcher sits above the first entry: Left and Right pick the card there,
  * Up from the first entry walks onto it. */
 bool esim_key(const struct key_event *key)
@@ -1446,23 +1395,23 @@ bool esim_key(const struct key_event *key)
     if (state.view != V_ROOT && state.view != V_NOTIFS)
         return key->kind == KEY_KIND_LEFT || key->kind == KEY_KIND_RIGHT;
     if (state.view == V_NOTIFS && !on_switcher && focused && ui.notif_actions) {
-        if (inside(focused, ui.notif_actions)) {
+        if (ui_inside(focused, ui.notif_actions)) {
             switch (key->kind) {
             case KEY_KIND_LEFT:
             case KEY_KIND_RIGHT:
-                focus_entry(lv_obj_get_child(ui.notif_actions, key->kind == KEY_KIND_RIGHT));
+                ui_focus_entry(lv_obj_get_child(ui.notif_actions, key->kind == KEY_KIND_RIGHT));
                 return true;
             case KEY_KIND_DOWN:
-                focus_entry(end_entry(ui.notif_list, false));
+                ui_focus_entry(ui_end_entry(ui.notif_list, false));
                 return true;
             case KEY_KIND_UP:
-                focus_entry(lv_obj_get_child(ui.notif_actions, 0));
+                ui_focus_entry(lv_obj_get_child(ui.notif_actions, 0));
                 break;
             default:
                 break;
             }
-        } else if (key->kind == KEY_KIND_UP && focused == end_entry(ui.notif_list, false)) {
-            focus_entry(lv_obj_get_child(ui.notif_actions, 0));
+        } else if (key->kind == KEY_KIND_UP && focused == ui_end_entry(ui.notif_list, false)) {
+            ui_focus_entry(lv_obj_get_child(ui.notif_actions, 0));
             return true;
         }
     }
@@ -1484,11 +1433,11 @@ bool esim_key(const struct key_event *key)
         if (on_switcher) {
             on_switcher = false;
             paint_switcher();
-            focus_entry(end_entry(ui.body, true));
+            ui_focus_entry(ui_end_entry(ui.body, true));
             return true;
         }
         lv_obj_t *focused = input_key_focus(input_group());
-        if (focused && inside(focused, ui.body) && focused != end_entry(ui.body, false))
+        if (focused && ui_inside(focused, ui.body) && focused != ui_end_entry(ui.body, false))
             return false;
         input_defocus();
         on_switcher = true;
@@ -1500,7 +1449,7 @@ bool esim_key(const struct key_event *key)
             return false;
         on_switcher = false;
         paint_switcher();
-        focus_entry(end_entry(ui.body, false));
+        ui_focus_entry(ui_end_entry(ui.body, false));
         return true;
     case KEY_KIND_OK:
         return on_switcher || (ui.se_switcher && input_key_focus(input_group()) == ui.se_switcher);

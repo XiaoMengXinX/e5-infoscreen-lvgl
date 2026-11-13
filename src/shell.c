@@ -1201,6 +1201,16 @@ void shell_poll_now(void)
     lv_timer_ready(poll_timer);
 }
 
+static void poll_later(lv_timer_t *t)
+{
+    shell_poll_now();
+}
+
+void shell_poll_after(uint32_t ms)
+{
+    lv_timer_set_repeat_count(lv_timer_create(poll_later, ms, NULL), 1);
+}
+
 /* ---------- picture ---------- */
 
 static void picture_close(lv_event_t *e)
@@ -1412,12 +1422,8 @@ void shell_key(const struct key_event *key)
     if (!lv_obj_is_hidden(ui.notice)) {
         if (key->kind == KEY_KIND_BACK)
             notice_dismiss(NULL);
-        else if (key->kind == KEY_KIND_UP || key->kind == KEY_KIND_LEFT)
-            input_focus_move(ui.notice_group, -1);
-        else if (key->kind == KEY_KIND_DOWN || key->kind == KEY_KIND_RIGHT)
-            input_focus_move(ui.notice_group, 1);
-        else if (key->kind == KEY_KIND_OK)
-            input_focus_key(LV_KEY_ENTER);
+        else
+            input_modal_key(ui.notice_group, key);
         return;
     }
     /* In a field the keypad types, * deletes, and Left and Right move the cursor. */

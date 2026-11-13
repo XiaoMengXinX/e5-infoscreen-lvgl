@@ -102,36 +102,28 @@ static void on_cancel(lv_event_t *e)
     dialog_close();
 }
 
+lv_obj_t *dialog_button_quiet(const char *text, lv_event_cb_t cb, void *ctx)
+{
+    lv_obj_t *button = dialog_button(text, cb, ctx);
+    lv_obj_set_style_bg_opa(button, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_text_color(lv_obj_get_child(button, 0), theme.dim, 0);
+    return button;
+}
+
 void dialog_cancel(void)
 {
-    lv_obj_t *cancel = dialog_button(L("取消", "Cancel"), on_cancel, NULL);
-    lv_obj_set_style_bg_opa(cancel, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_text_color(lv_obj_get_child(cancel, 0), theme.dim, 0);
+    dialog_button_quiet(L("取消", "Cancel"), on_cancel, NULL);
 }
 
 bool dialog_key(const struct key_event *key)
 {
     if (!root)
         return false;
-    switch (key->kind) {
-    case KEY_KIND_BACK:
+    if (key->kind == KEY_KIND_BACK) {
         if (closable)
             dialog_close();
-        break;
-    case KEY_KIND_OK:
-        if (!key->repeat)
-            input_focus_key(LV_KEY_ENTER);
-        break;
-    case KEY_KIND_UP:
-    case KEY_KIND_LEFT:
-        input_focus_move(group, -1);
-        break;
-    case KEY_KIND_DOWN:
-    case KEY_KIND_RIGHT:
-        input_focus_move(group, 1);
-        break;
-    default:
-        break;
+    } else {
+        input_modal_key(group, key);
     }
     return true;
 }

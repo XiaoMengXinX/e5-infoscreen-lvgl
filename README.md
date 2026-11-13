@@ -21,6 +21,7 @@
 | `src/stk.c` | SIM 卡应用（STK）菜单与主动式命令 |
 | `src/speedtest.c` | 网速测试：speedtest-go 与全球网测两种后端，按需安装 |
 | `src/install.c` | 安装对话框：脚本的步骤与进度，测速与 eSIM 共用 |
+| `src/child.c` | 伪终端中的子进程：按行读取输出并回收，安装、测速和基带重启共用 |
 | `src/update.c` | 界面自身更新：检查 release、下载校验、备份、回滚与自动检查 |
 | `src/lpac.c` `src/lpac_bridge.py` | eSIM 通信：优先复用系统 eUICC 后端；老系统通过伪终端桥接 lpac 的 AT／stdio 驱动 |
 | `src/esim.c` | eSIM 管理：配置文件、下载前确认、自动通知上报、芯片详情、eSTK.me 多 SE 选择 |

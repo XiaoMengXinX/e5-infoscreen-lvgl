@@ -176,6 +176,26 @@ void input_focus_toward(lv_group_t *group, int dx, int dy)
     lv_obj_scroll_to_view_recursive(best, LV_ANIM_ON);
 }
 
+bool input_modal_key(lv_group_t *group, const struct key_event *key)
+{
+    switch (key->kind) {
+    case KEY_KIND_OK:
+        if (!key->repeat)
+            input_focus_key(LV_KEY_ENTER);
+        return true;
+    case KEY_KIND_UP:
+    case KEY_KIND_LEFT:
+        input_focus_move(group, -1);
+        return true;
+    case KEY_KIND_DOWN:
+    case KEY_KIND_RIGHT:
+        input_focus_move(group, 1);
+        return true;
+    default:
+        return false;
+    }
+}
+
 void input_set_group(lv_group_t *group)
 {
     lv_indev_set_group(keypad_indev, group);

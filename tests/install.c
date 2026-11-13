@@ -1,3 +1,4 @@
+#include "../src/child.c"
 #include "../src/install.c"
 #include <assert.h>
 #include <sys/prctl.h>
@@ -16,15 +17,16 @@ lv_group_t *input_group(void) { return group; }
 void input_set_group(lv_group_t *next) { group = next; }
 void input_focus_key(uint32_t key) {}
 void input_focus_move(lv_group_t *g, int dir) {}
+bool input_modal_key(lv_group_t *g, const struct key_event *key) { return false; }
 static void installed(void) { completed = true; }
 
 static void wait_script(void)
 {
-    for (int i = 0; install.pid >= 0 && i < 1000; i++) {
-        poll_output(reader);
+    for (int i = 0; install_running() && i < 1000; i++) {
+        poll_output(install.child.reader);
         usleep(1000);
     }
-    assert(install.pid < 0);
+    assert(!install_running());
 }
 
 int main(void)
@@ -37,12 +39,12 @@ int main(void)
     install_run("Install", "printf '@add\\r10/40\\r'; read step; printf '40/40'", installed);
     unsigned before = wakeups;
     for (int i = 0; strcmp(lv_label_get_text(install.meter.value), "25%") && i < 500; i++) {
-        poll_output(reader);
+        poll_output(install.child.reader);
         usleep(1000);
     }
     assert(!strcmp(lv_label_get_text(install.meter.value), "25%"));
     assert(lv_bar_get_value(install.meter.bar) == 25 && wakeups > before);
-    assert(write(install.fd, "\n", 1) == 1);
+    assert(write(install.child.fd, "\n", 1) == 1);
     wait_script();
     assert(completed && !dialog_is_open() && !install.open);
 

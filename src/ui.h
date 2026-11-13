@@ -41,9 +41,22 @@ void ui_set_fmt(lv_obj_t *label, const char *fmt, ...);
 void ui_button_text(lv_obj_t *button, const char *text);
 void ui_meter_set(struct ui_meter *meter, const char *text, int percent, lv_color_t color);
 void ui_focusable(lv_obj_t *obj);
+/* Focuses obj and shows the focus as the keys do. */
+void ui_focus_key(lv_obj_t *obj);
+/* ui_focus_key scrolled into view; NULL does nothing. */
+void ui_focus_entry(lv_obj_t *entry);
+/* The first (or last) descendant of parent the keys can reach. */
+lv_obj_t *ui_end_entry(lv_obj_t *parent, bool last);
+bool ui_inside(lv_obj_t *obj, lv_obj_t *parent);
 /* A one-line text field with the on-screen keyboard; max 0 is unlimited. Set its
  * text after any accepted characters, which filter it. */
 lv_obj_t *ui_field(lv_obj_t *parent, uint32_t max);
+/* A ui_field under a dim caption. */
+lv_obj_t *ui_labeled_field(lv_obj_t *parent, const char *label, uint32_t max);
+/* The SIM 1 / SIM 2 switch above an app's content; cb gets the slot as its user
+ * data. The keys reach it only through Left and Right on it. */
+lv_obj_t *ui_sim_tabs(lv_obj_t *parent, lv_event_cb_t cb);
+void ui_sim_tabs_paint(lv_obj_t *tabs, int current, bool keyed);
 /* Fills a ui_button with the accent color as the main action. */
 void ui_primary(lv_obj_t *button);
 /* Fills a ui_button with the danger color as the destructive action. */

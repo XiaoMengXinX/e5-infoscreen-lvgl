@@ -41,8 +41,7 @@ static void show(lv_obj_t *view)
     lv_obj_set_hidden(esim, view != esim);
     lv_obj_set_hidden(clash, view != clash);
     if (view == list && list_focus) {
-        lv_group_focus_obj(list_focus);
-        lv_obj_add_state(list_focus, LV_STATE_FOCUS_KEY);
+        ui_focus_key(list_focus);
         list_focus = NULL;
     }
     if (view == list) {

@@ -592,13 +592,6 @@ static void on_confirm_reset(lv_event_t *e)
     dialog_cancel();
 }
 
-static lv_obj_t *field(lv_obj_t *parent, const char *label, uint32_t max)
-{
-    lv_obj_t *box = ui_box(parent, LV_FLEX_FLOW_COLUMN, 4);
-    lv_label_set_text(ui_text(box, 12, false, theme.dim), label);
-    return ui_field(box, max);
-}
-
 void clash_create(lv_obj_t *parent)
 {
     memset(&ui, 0, sizeof ui);
@@ -638,13 +631,13 @@ void clash_create(lv_obj_t *parent)
     lv_obj_set_hidden(ui.setup, true);
     ui_heading(ui.setup, L("连接设置", "Connection"));
     lv_obj_t *setup = ui_card(ui.setup);
-    ui.host = field(setup, L("IP 地址", "IP address"), sizeof clash.host - 1);
+    ui.host = ui_labeled_field(setup, L("IP 地址", "IP address"), sizeof clash.host - 1);
     lv_textarea_set_accepted_chars(ui.host, "0123456789abcdefABCDEF.:");
     lv_textarea_set_placeholder_text(ui.host, L("127.0.0.1（本机）", "127.0.0.1 (this device)"));
-    ui.port = field(setup, L("API 端口", "API port"), 5);
+    ui.port = ui_labeled_field(setup, L("API 端口", "API port"), 5);
     lv_textarea_set_accepted_chars(ui.port, "0123456789");
     lv_textarea_set_placeholder_text(ui.port, "9090");
-    ui.secret = field(setup, L("控制密码", "Secret"), sizeof clash.secret - 1);
+    ui.secret = ui_labeled_field(setup, L("控制密码", "Secret"), sizeof clash.secret - 1);
     lv_textarea_set_placeholder_text(ui.secret, L("未设置", "None"));
     lv_obj_t *actions = ui_box(setup, LV_FLEX_FLOW_ROW, 8);
     lv_obj_set_flex_grow(ui_button(actions, L("自动识别", "Detect"), on_detect, NULL), 1);

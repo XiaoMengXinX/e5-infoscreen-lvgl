@@ -231,10 +231,8 @@ static lv_obj_t *row(const char *key, const char *icon, const char *label, const
         lv_obj_add_event_cb(r, on_row, LV_EVENT_CLICKED, (void *)(intptr_t)row_count);
         lv_obj_set_user_data(r, (void *)(intptr_t)(row_count + 1));
         /* Rows take focus only from the keys, so a restored one is key focused. */
-        if (!strcmp(key, focused)) {
-            lv_group_focus_obj(r);
-            lv_obj_add_state(r, LV_STATE_FOCUS_KEY);
-        }
+        if (!strcmp(key, focused))
+            ui_focus_key(r);
         row_count++;
     }
     if (*armed && !strcmp(armed, key)) {
@@ -1397,9 +1395,7 @@ static void on_field(lv_event_t *e)
 static void field(const char *name, const char *label, int max, bool password, const char *placeholder)
 {
     struct view *v = top();
-    lv_obj_t *box = ui_box(body, LV_FLEX_FLOW_COLUMN, 4);
-    lv_label_set_text(ui_text(box, 12, false, theme.dim), label);
-    lv_obj_t *ta = ui_field(box, (uint32_t)max);
+    lv_obj_t *ta = ui_labeled_field(body, label, (uint32_t)max);
     lv_textarea_set_password_mode(ta, password);
     if (placeholder)
         lv_textarea_set_placeholder_text(ta, placeholder);

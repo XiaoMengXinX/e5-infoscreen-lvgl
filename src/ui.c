@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "icons.h"
+#include "input.h"
 #include "keyboard.h"
 #include "theme.h"
 
@@ -166,6 +167,49 @@ void ui_focusable(lv_obj_t *obj)
         lv_group_add_obj(group, obj);
 }
 
+void ui_focus_key(lv_obj_t *obj)
+{
+    lv_group_focus_obj(obj);
+    lv_obj_add_state(obj, LV_STATE_FOCUS_KEY);
+}
+
+void ui_focus_entry(lv_obj_t *entry)
+{
+    if (!entry)
+        return;
+    ui_focus_key(entry);
+    lv_obj_scroll_to_view_recursive(entry, LV_ANIM_ON);
+}
+
+lv_obj_t *ui_end_entry(lv_obj_t *parent, bool last)
+{
+    uint32_t n = lv_obj_get_child_count(parent);
+    for (uint32_t i = 0; i < n; i++) {
+        lv_obj_t *child = lv_obj_get_child(parent, (int32_t)(last ? n - 1 - i : i));
+        if (lv_obj_is_hidden(child))
+            continue;
+        if (lv_obj_get_group(child) == input_group() && !lv_obj_has_state(child, LV_STATE_DISABLED))
+            return child;
+        if ((child = ui_end_entry(child, last)))
+            return child;
+    }
+    return NULL;
+}
+
+bool ui_inside(lv_obj_t *obj, lv_obj_t *parent)
+{
+    while (obj && obj != parent)
+        obj = lv_obj_get_parent(obj);
+    return obj != NULL;
+}
+
+lv_obj_t *ui_labeled_field(lv_obj_t *parent, const char *label, uint32_t max)
+{
+    lv_obj_t *box = ui_box(parent, LV_FLEX_FLOW_COLUMN, 4);
+    lv_label_set_text(ui_text(box, 12, false, theme.dim), label);
+    return ui_field(box, max);
+}
+
 lv_obj_t *ui_button(lv_obj_t *parent, const char *text, lv_event_cb_t cb, void *ctx)
 {
     lv_obj_t *button = lv_button_create(parent);
@@ -221,6 +265,35 @@ void ui_choices_paint(lv_obj_t *row, int selected, bool keyed)
         lv_obj_set_style_text_color(lv_obj_get_child(button, 0), i == selected ? theme.accent : theme.text, 0);
     }
     lv_obj_set_style_outline_width(row, keyed ? 2 : 0, 0);
+}
+
+lv_obj_t *ui_sim_tabs(lv_obj_t *parent, lv_event_cb_t cb)
+{
+    lv_obj_t *tabs = ui_box(parent, LV_FLEX_FLOW_ROW, 0);
+    lv_obj_set_style_bg_color(tabs, theme.surface, 0);
+    lv_obj_set_style_bg_opa(tabs, theme.surface_opa, 0);
+    lv_obj_set_style_radius(tabs, S(18), 0);
+    lv_obj_set_style_pad_all(tabs, S(3), 0);
+    for (int c = 0; c < 2; c++) {
+        lv_obj_t *tab = ui_button(tabs, c ? "SIM 2" : "SIM 1", cb, (void *)(intptr_t)c);
+        lv_group_remove_obj(tab);
+        lv_obj_set_flex_grow(tab, 1);
+        lv_obj_set_style_pad_ver(tab, S(5), 0);
+        lv_obj_set_style_radius(tab, S(15), 0);
+        lv_obj_set_style_bg_color(tab, theme.active, 0);
+        lv_obj_set_style_text_font(lv_obj_get_child(tab, 0), F(12), 0);
+    }
+    return tabs;
+}
+
+void ui_sim_tabs_paint(lv_obj_t *tabs, int current, bool keyed)
+{
+    for (int32_t c = 0; c < 2; c++) {
+        lv_obj_t *tab = lv_obj_get_child(tabs, c);
+        lv_obj_set_style_bg_opa(tab, c == current ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_text_color(lv_obj_get_child(tab, 0), c == current ? theme.accent : theme.dim, 0);
+        lv_obj_set_state(tab, LV_STATE_FOCUS_KEY, keyed && c == current);
+    }
 }
 
 lv_obj_t *ui_note(lv_obj_t *parent, const char *text)

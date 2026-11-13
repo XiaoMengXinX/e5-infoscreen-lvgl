@@ -198,11 +198,6 @@ static void on_usb(lv_event_t *e)
     settings_open_category("usb", "USB", "usb_role");
 }
 
-static void poll_status(lv_timer_t *t)
-{
-    shell_poll_now();
-}
-
 /* Two presses within the double-click time, by touch or by OK; the card takes
  * them only while the link is offline. */
 static void on_wan(lv_event_t *e)
@@ -215,7 +210,7 @@ static void on_wan(lv_event_t *e)
     api_post("/wan-reconnect", NULL, NULL, NULL);
     toast("%s", L("正在重新连接", "Reconnecting"));
     /* As the web page does, the status is read again once the link had time to come up. */
-    lv_timer_set_repeat_count(lv_timer_create(poll_status, 3000, NULL), 1);
+    shell_poll_after(3000);
 }
 
 static void on_wifi(lv_event_t *e)

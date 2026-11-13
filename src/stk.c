@@ -93,7 +93,7 @@ static struct ring_line {
 } rings[2];
 
 static struct {
-    lv_obj_t *root, *switcher, *tabs[2], *body;
+    lv_obj_t *root, *switcher, *body;
     lv_obj_t *field;
 } ui;
 /* Up from the first entry moves the keys onto the SIM switch, as in the dialer. */
@@ -1256,38 +1256,6 @@ static void on_tab(lv_event_t *e)
     render();
 }
 
-static bool inside(lv_obj_t *obj, lv_obj_t *parent)
-{
-    while (obj && obj != parent)
-        obj = lv_obj_get_parent(obj);
-    return obj != NULL;
-}
-
-/* The first (or last) entry the keys can reach under parent. */
-static lv_obj_t *end_entry(lv_obj_t *parent, bool last)
-{
-    uint32_t n = lv_obj_get_child_count(parent);
-    for (uint32_t i = 0; i < n; i++) {
-        lv_obj_t *child = lv_obj_get_child(parent, (int32_t)(last ? n - 1 - i : i));
-        if (lv_obj_is_hidden(child))
-            continue;
-        if (lv_obj_get_group(child) == input_group() && !lv_obj_has_state(child, LV_STATE_DISABLED))
-            return child;
-        if ((child = end_entry(child, last)))
-            return child;
-    }
-    return NULL;
-}
-
-static void focus_entry(lv_obj_t *entry)
-{
-    if (!entry)
-        return;
-    lv_group_focus_obj(entry);
-    lv_obj_add_state(entry, LV_STATE_FOCUS_KEY);
-    lv_obj_scroll_to_view_recursive(entry, LV_ANIM_ON);
-}
-
 /* Left and Right only switch the card, on the switch; elsewhere they would
  * change the page in the middle of a SIM session. */
 bool stk_key(const struct key_event *key)
@@ -1309,11 +1277,11 @@ bool stk_key(const struct key_event *key)
         if (on_switcher) {
             on_switcher = false;
             render();
-            focus_entry(end_entry(ui.body, true));
+            ui_focus_entry(ui_end_entry(ui.body, true));
             return true;
         }
         lv_obj_t *focused = input_key_focus(input_group());
-        if (!dual || (focused && inside(focused, ui.body) && focused != end_entry(ui.body, false)))
+        if (!dual || (focused && ui_inside(focused, ui.body) && focused != ui_end_entry(ui.body, false)))
             return false;
         input_defocus();
         on_switcher = true;
@@ -1327,7 +1295,7 @@ bool stk_key(const struct key_event *key)
             return false;
         on_switcher = false;
         render();
-        focus_entry(end_entry(ui.body, false));
+        ui_focus_entry(ui_end_entry(ui.body, false));
         return true;
     }
     case KEY_KIND_OK:
@@ -1415,11 +1383,7 @@ static void render(void)
     bool dual = present(0) && present(1);
     on_switcher &= dual;
     lv_obj_set_hidden(ui.switcher, !dual);
-    for (int c = 0; c < 2; c++) {
-        lv_obj_set_style_bg_opa(ui.tabs[c], c == current ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-        lv_obj_set_state(ui.tabs[c], LV_STATE_FOCUS_KEY, on_switcher && c == current);
-        lv_obj_set_style_text_color(lv_obj_get_child(ui.tabs[c], 0), c == current ? theme.accent : theme.dim, 0);
-    }
+    ui_sim_tabs_paint(ui.switcher, current, on_switcher);
     keyboard_close();
     lv_obj_clean(ui.body);
     ui.field = NULL;
@@ -1449,8 +1413,7 @@ static void render(void)
             lv_obj_t *row = ui_row(ui.body, NULL, m->items[i].text, NULL, ROW_CHEVRON, on_item,
                                    (void *)(uintptr_t)m->items[i].id);
             if (k->view == V_SELECT && m->default_item && m->items[i].id == m->default_item) {
-                lv_group_focus_obj(row);
-                lv_obj_add_state(row, LV_STATE_FOCUS_KEY);
+                ui_focus_key(row);
             }
         }
         break;
@@ -1572,20 +1535,7 @@ void stk_create(lv_obj_t *parent)
     memset(&ui, 0, sizeof ui);
     ui.root = ui_box(parent, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     /* The phone dialer's SIM switch; Left and Right pick the card. */
-    lv_obj_t *tabs = ui.switcher = ui_box(ui.root, LV_FLEX_FLOW_ROW, 0);
-    lv_obj_set_style_bg_color(tabs, theme.surface, 0);
-    lv_obj_set_style_bg_opa(tabs, theme.surface_opa, 0);
-    lv_obj_set_style_radius(tabs, S(18), 0);
-    lv_obj_set_style_pad_all(tabs, S(3), 0);
-    for (int c = 0; c < 2; c++) {
-        ui.tabs[c] = ui_button(tabs, c ? "SIM 2" : "SIM 1", on_tab, (void *)(intptr_t)c);
-        lv_group_remove_obj(ui.tabs[c]);
-        lv_obj_set_flex_grow(ui.tabs[c], 1);
-        lv_obj_set_style_pad_ver(ui.tabs[c], S(5), 0);
-        lv_obj_set_style_radius(ui.tabs[c], S(15), 0);
-        lv_obj_set_style_bg_color(ui.tabs[c], theme.active, 0);
-        lv_obj_set_style_text_font(lv_obj_get_child(ui.tabs[c], 0), F(12), 0);
-    }
+    ui.switcher = ui_sim_tabs(ui.root, on_tab);
     ui.body = ui_box(ui.root, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     char option[4];
     shared_option("stk", "stk", "enabled", option, sizeof option);

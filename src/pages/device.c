@@ -105,16 +105,11 @@ static void on_brightness(lv_event_t *e)
     paint_level();
 }
 
-static void poll_soon(lv_timer_t *t)
-{
-    shell_poll_now();
-}
-
 static void on_reconnect(lv_event_t *e)
 {
     toast("%s", L("正在重新连接…", "Reconnecting…"));
     api_post("/wan-reconnect", NULL, NULL, NULL);
-    lv_timer_set_repeat_count(lv_timer_create(poll_soon, 3000, NULL), 1);
+    shell_poll_after(3000);
 }
 
 static void create(lv_obj_t *page)

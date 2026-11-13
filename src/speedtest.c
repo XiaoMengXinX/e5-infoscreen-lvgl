@@ -2,11 +2,7 @@
  * pseudo-terminal and the lines they redraw are parsed. */
 #include "speedtest.h"
 
-#include <errno.h>
-#include <fcntl.h>
 #include <math.h>
-#include <pty.h>
-#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,6 +12,7 @@
 #include "src/misc/lv_text_private.h"
 
 #include "app.h"
+#include "child.h"
 #include "icons.h"
 #include "install.h"
 #include "theme.h"
@@ -86,14 +83,11 @@ static const double marks[] = {0, 5, 10, 50, 100, 250, 500, 1000};
 enum phase { IDLE, CONNECTING, PING, DOWNLOAD, UPLOAD, DONE, FAILED };
 
 static struct {
-    pid_t pid;
-    int fd;
-    char line[512];
-    size_t len;
+    struct child child;
     enum phase phase;
     double ping, jitter, down, up, shown;
     char isp[64], ip[48], sponsor[64], place[64];
-} test = {.pid = -1, .fd = -1};
+} test;
 
 static struct {
     lv_obj_t *root, *arc, *needle, *readout, *value, *unit, *go;
@@ -101,7 +95,6 @@ static struct {
     lv_obj_t *cells[2];
     lv_obj_t *marks[SEGMENTS + 1];
 } ui;
-static lv_timer_t *reader;
 
 static float gauge_position(double mbps)
 {
@@ -335,26 +328,27 @@ static void parse(const char *line)
     paint();
 }
 
-static void take_line(void)
+/* The programs redraw their lines with terminal escape sequences, which are dropped. */
+static void on_line(const char *line)
 {
-    char clean[sizeof test.line];
+    char clean[sizeof test.child.line];
     size_t n = 0;
-    for (size_t i = 0; i < test.len; i++) {
-        if (test.line[i] == 0x1b) {
-            if (i + 1 < test.len && test.line[i + 1] == '[') {
+    for (size_t i = 0; line[i]; i++) {
+        if (line[i] == 0x1b) {
+            if (line[i + 1] == '[') {
                 i += 2;
-                while (i < test.len && !((test.line[i] >= 'A' && test.line[i] <= 'Z') ||
-                                         (test.line[i] >= 'a' && test.line[i] <= 'z')))
+                while (line[i] && !((line[i] >= 'A' && line[i] <= 'Z') || (line[i] >= 'a' && line[i] <= 'z')))
                     i++;
-            } else {
+                if (!line[i])
+                    break;
+            } else if (line[i + 1]) {
                 i++;
             }
             continue;
         }
-        clean[n++] = test.line[i];
+        clean[n++] = line[i];
     }
     clean[n] = 0;
-    test.len = 0;
     if (n)
         parse(clean);
 }
@@ -366,22 +360,15 @@ static void run_test(void)
     run((char *const[]){(char *)backend->program, NULL});
 }
 
-static int reap(void)
+static void rest_needle(void)
 {
-    int status = 0;
-    close(test.fd);
-    test.fd = -1;
-    while (waitpid(test.pid, &status, 0) < 0 && errno == EINTR) {
-    }
-    test.pid = -1;
     lv_anim_delete(&test, shown_anim);
     test.shown = 0;
-    return status;
 }
 
-static void finish(void)
+static void exited(int status)
 {
-    int status = reap();
+    rest_needle();
     bool ok = WIFEXITED(status) && WEXITSTATUS(status) == 0 && test.down > 0;
     test.phase = ok ? DONE : FAILED;
     if (!ok)
@@ -389,48 +376,13 @@ static void finish(void)
     paint();
 }
 
-static void poll_output(lv_timer_t *t)
-{
-    char buf[1024];
-    for (;;) {
-        ssize_t n = read(test.fd, buf, sizeof buf);
-        if (n > 0) {
-            for (ssize_t i = 0; i < n; i++) {
-                if (buf[i] == '\r' || buf[i] == '\n')
-                    take_line();
-                else if (test.len < sizeof test.line - 1)
-                    test.line[test.len++] = buf[i];
-            }
-            continue;
-        }
-        if (n < 0 && errno == EINTR)
-            continue;
-        if (n < 0 && errno == EAGAIN)
-            return;
-        /* EOF, or EIO once the program has exited and closed the terminal. */
-        lv_timer_delete(t);
-        reader = NULL;
-        finish();
-        return;
-    }
-}
-
 static void run(char *const argv[])
 {
-    int fd;
-    pid_t pid = forkpty(&fd, NULL, NULL, NULL);
-    if (pid < 0) {
+    test = (typeof(test)){.phase = CONNECTING};
+    if (!child_start(&test.child, argv, on_line, exited)) {
+        test.phase = IDLE;
         toast("%s", L("无法启动测速", "Cannot start the speed test"));
-        return;
     }
-    if (pid == 0) {
-        execv(argv[0], argv);
-        _exit(127);
-    }
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-    fcntl(fd, F_SETFD, FD_CLOEXEC);
-    test = (typeof(test)){.pid = pid, .fd = fd, .phase = CONNECTING};
-    reader = lv_timer_create(poll_output, 50, NULL);
     paint();
 }
 
@@ -444,7 +396,7 @@ static void on_install(lv_event_t *e)
 
 static void start(void)
 {
-    if (test.pid >= 0)
+    if (child_running(&test.child))
         return;
     if (!access(backend->program, X_OK)) {
         run_test();
@@ -461,24 +413,22 @@ static void start(void)
 
 void speedtest_reset(void)
 {
-    if (test.pid >= 0)
+    if (child_running(&test.child))
         return;
-    test = (typeof(test)){.pid = -1, .fd = -1};
+    test = (typeof(test)){0};
     paint();
 }
 
 static void halt(void)
 {
-    kill(test.pid, SIGKILL);
-    lv_timer_delete(reader);
-    reader = NULL;
-    reap();
+    child_kill(&test.child);
+    rest_needle();
 }
 
 void speedtest_stop(void)
 {
     install_cancel();
-    if (test.pid < 0)
+    if (!child_running(&test.child))
         return;
     halt();
     test.phase = IDLE;
@@ -487,7 +437,7 @@ void speedtest_stop(void)
 
 bool speedtest_cancel(void)
 {
-    if (test.pid < 0)
+    if (!child_running(&test.child))
         return false;
     halt();
     speedtest_reset();
@@ -497,7 +447,7 @@ bool speedtest_cancel(void)
 
 bool speedtest_running(void)
 {
-    return test.pid >= 0 || install_running();
+    return child_running(&test.child) || install_running();
 }
 
 static void load_backend(void)

@@ -89,6 +89,8 @@ bool shell_touch_allowed(void);
 /* time is when the panel sampled the point, in monotonic ms. */
 void shell_swipe(bool pressed, lv_point_t point, double time);
 void shell_poll_now(void);
+/* A status poll once ms have passed, for a change the backend takes time to show. */
+void shell_poll_after(uint32_t ms);
 void shell_screen_changed(void);
 void toast(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void idle_reset(void);
@@ -133,6 +135,8 @@ bool power_menu_key(const struct key_event *key);
 void dialog_open(const char *title, const char *note);
 void dialog_set_closable(bool closable);
 lv_obj_t *dialog_button(const char *text, lv_event_cb_t cb, void *ctx);
+/* A dialog_button in the quiet style of Cancel, for the way out. */
+lv_obj_t *dialog_button_quiet(const char *text, lv_event_cb_t cb, void *ctx);
 void dialog_cancel(void);
 void dialog_close(void);
 /* The open dialog's sheet, for content above its buttons. */

@@ -35,6 +35,7 @@ void input_set_group(lv_group_t *next) { group = next; }
 void input_defocus(void) {}
 void input_focus_key(uint32_t key) {}
 void input_focus_move(lv_group_t *g, int dir) {}
+bool input_modal_key(lv_group_t *g, const struct key_event *key) { return false; }
 lv_obj_t *input_key_focus(lv_group_t *g) { return lv_group_get_focused(g); }
 bool lpac_present(void) { return true; }
 void lpac_set_backend(const char *mode) { snprintf(configured_backend, sizeof configured_backend, "%s", mode); }
@@ -253,8 +254,8 @@ int main(void)
     render();
     lv_obj_t *process_all = lv_obj_get_child(ui.notif_actions, 0);
     lv_obj_t *delete_all = lv_obj_get_child(ui.notif_actions, 1);
-    lv_obj_t *first_notification = end_entry(ui.notif_list, false);
-    focus_entry(process_all);
+    lv_obj_t *first_notification = ui_end_entry(ui.notif_list, false);
+    ui_focus_entry(process_all);
     assert(esim_key(&(struct key_event){.kind = KEY_KIND_RIGHT}));
     assert(input_key_focus(input_group()) == delete_all);
     assert(esim_key(&(struct key_event){.kind = KEY_KIND_DOWN}));

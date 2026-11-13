@@ -87,11 +87,6 @@ static void on_show_key(lv_event_t *e)
         api_get("/wifi-key", key_loaded, NULL);
 }
 
-static void poll_soon(lv_timer_t *t)
-{
-    shell_poll_now();
-}
-
 static void toggled(int status, cJSON *r, void *ctx)
 {
     if (!api_reply_ok(r)) {
@@ -101,7 +96,7 @@ static void toggled(int status, cJSON *r, void *ctx)
             error_text(jstr(r, "error"), error, sizeof error);
         toast("%s%s%s", L("失败", "Failed"), *error ? ": " : "", error);
     }
-    lv_timer_set_repeat_count(lv_timer_create(poll_soon, 1500, NULL), 1);
+    shell_poll_after(1500);
 }
 
 static void status(const cJSON *st);

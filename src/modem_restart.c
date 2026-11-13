@@ -1,15 +1,11 @@
 #include "modem_restart.h"
 
-#include <errno.h>
-#include <fcntl.h>
-#include <pty.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 #include "app.h"
+#include "child.h"
 #include "modem_restart_script.h"
 #include "stk.h"
 #include "theme.h"
@@ -19,24 +15,10 @@
 static struct {
     lv_obj_t *step, *button;
     struct ui_meter meter;
-    pid_t pid;
-    int fd;
-    char line[512];
+    struct child child;
     char error[512];
-    size_t len;
     void (*done)(void);
-} task = {.pid = -1, .fd = -1};
-
-static int reap(void)
-{
-    int status = 0;
-    close(task.fd);
-    task.fd = -1;
-    while (waitpid(task.pid, &status, 0) < 0 && errno == EINTR) {
-    }
-    task.pid = -1;
-    return status;
-}
+} task;
 
 static void on_close(lv_event_t *e)
 {
@@ -92,49 +74,18 @@ static void progress(const char *line)
     }
 }
 
-static void take_line(void)
+static void exited(int status)
 {
-    task.line[task.len] = 0;
-    task.len = 0;
-    if (*task.line)
-        progress(task.line);
-}
-
-static void poll_output(lv_timer_t *t)
-{
-    idle_reset();
-    char buf[1024];
-    for (;;) {
-        ssize_t n = read(task.fd, buf, sizeof buf);
-        if (n > 0) {
-            for (ssize_t i = 0; i < n; i++) {
-                if (buf[i] == '\r' || buf[i] == '\n')
-                    take_line();
-                else if (task.len < sizeof task.line - 1)
-                    task.line[task.len++] = buf[i];
-            }
-            continue;
-        }
-        if (n < 0 && errno == EINTR)
-            continue;
-        if (n < 0 && errno == EAGAIN)
-            return;
-        if (task.len)
-            take_line();
-        lv_timer_delete(t);
-        int status = reap();
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
-            succeeded();
-        else
-            failed(*task.error ? task.error : L("基带重启失败", "Baseband restart failed"));
-        return;
-    }
+    if (WIFEXITED(status) && WEXITSTATUS(status) == 0)
+        succeeded();
+    else
+        failed(*task.error ? task.error : L("基带重启失败", "Baseband restart failed"));
 }
 
 void modem_restart_run(void (*done)(void))
 {
     dialog_open(L("重启基带", "Restart baseband"), NULL);
-    task = (typeof(task)){.pid = -1, .fd = -1, .done = done};
+    task = (typeof(task)){.done = done};
     lv_obj_t *sheet = dialog_sheet();
     task.step = ui_text(sheet, 13, false, theme.text);
     lv_obj_set_width(task.step, LV_PCT(100));
@@ -145,21 +96,10 @@ void modem_restart_run(void (*done)(void))
     lv_obj_add_state(task.button, LV_STATE_DISABLED);
     dialog_set_closable(false);
     stk_suspend_for_modem_restart();
-    int fd;
-    pid_t pid = forkpty(&fd, NULL, NULL, NULL);
-    if (pid < 0) {
+    if (!child_start(&task.child, (char *const[]){"/usr/bin/python3", "-c", (char *)MODEM_RESTART_SCRIPT, NULL}, progress,
+                     exited)) {
         stk_resume_after_modem_restart();
         dialog_close();
         toast("%s", L("无法启动基带重启", "Cannot start baseband restart"));
-        return;
     }
-    if (pid == 0) {
-        execl("/usr/bin/python3", "python3", "-c", MODEM_RESTART_SCRIPT, (char *)NULL);
-        _exit(127);
-    }
-    fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-    fcntl(fd, F_SETFD, FD_CLOEXEC);
-    task.pid = pid;
-    task.fd = fd;
-    lv_timer_create(poll_output, 50, NULL);
 }
