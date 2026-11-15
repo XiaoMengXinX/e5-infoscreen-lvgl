@@ -44,8 +44,12 @@ static int sensor_prepare_gc5035(int fd)
         sensor_u32_gc5035(fd, SENSOR_IO_SET_MCLK, 0) || sensor_u32_gc5035(fd, SENSOR_IO_SET_AVDD, 13) ||
         sensor_u32_gc5035(fd, SENSOR_IO_SET_DVDD, 13) || sensor_u32_gc5035(fd, SENSOR_IO_SET_IOVDD, 13)) return -1;
     sensor_delay_gc5035(12000);
-    if (sensor_u32_gc5035(fd, SENSOR_IO_SET_IOVDD, 7) || sensor_u32_gc5035(fd, SENSOR_IO_SET_DVDD, 10) ||
-        sensor_u32_gc5035(fd, SENSOR_IO_SET_AVDD, 3)) return -1;
+    sensor_delay_gc5035(1000);
+    if (sensor_u32_gc5035(fd, SENSOR_IO_SET_IOVDD, 7)) return -1;
+    sensor_delay_gc5035(1000);
+    if (sensor_u32_gc5035(fd, SENSOR_IO_SET_DVDD, 10)) return -1;
+    sensor_delay_gc5035(1000);
+    if (sensor_u32_gc5035(fd, SENSOR_IO_SET_AVDD, 3)) return -1;
     sensor_delay_gc5035(1000);
     if (sensor_u32_gc5035(fd, SENSOR_IO_SET_MCLK, 24)) return -1;
     sensor_delay_gc5035(10000);

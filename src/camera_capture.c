@@ -355,7 +355,7 @@ static void *session(void *unused)
     csi_open = true;
     if (command(image, SPRD_IMG_IO_STREAM_ON, &mode, "start capture")) goto out;
     streaming = true;
-    if (sensor_write(sensor, 0x0100, 1)) { failure("sensor stream"); goto out; }
+    if (sensor_write(sensor, e5 ? 0x3e : 0x0100, e5 ? 0x91 : 1)) { failure("sensor stream"); goto out; }
     unsigned frames = 0, exposure = 1842, gain = 1024;
     while (!stopping()) {
         struct sprd_img_read_op event = {.cmd = SPRD_IMG_GET_IMG_BUFFER};
@@ -409,7 +409,7 @@ release_frame:
         if (command(image, SPRD_IMG_IO_SET_FRAME_ADDR, &output, "requeue frame")) break;
     }
 out:
-    if (sensor >= 0) sensor_write(sensor, 0x0100, 0);
+    if (sensor >= 0) sensor_write(sensor, e5 ? 0x3e : 0x0100, 0);
     uint32_t off = 0;
     if (streaming) command(image, SPRD_IMG_IO_STREAM_OFF, &off, "stop capture");
     if (csi_open) {
