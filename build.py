@@ -104,6 +104,7 @@ def build():
         'platform_errors.h': platform_errors(),
         'modem_restart_script.h': embedded_script('modem_restart'),
         'lpac_bridge_script.h': embedded_script('lpac_bridge'),
+        'camera_driver_script.h': embedded_script('camera_driver'),
         'build_version.h': version_header(stamp, commit),
     }
     for name, content in generated.items():

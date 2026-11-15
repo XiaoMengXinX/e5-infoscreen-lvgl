@@ -21,6 +21,7 @@ struct mask {
 };
 
 static struct icon icons[] = {
+    {.name = "camera", .path = "M3 6h4l2-3h6l2 3h4v14H3zM16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0"},
     {.name = "home", .path = "m3 10 9-7 9 7M5 9v12h5v-7h4v7h5V9"},
     {.name = "traffic", .path = "M6 3v17m-4-4 4 4 4-4M18 21V4m-4 4 4-4 4 4"},
     {.name = "wifi", .path = "M2 8a16 16 0 0 1 20 0M5 12a11 11 0 0 1 14 0m-11 4a6 6 0 0 1 8 0m-4 4h.01"},

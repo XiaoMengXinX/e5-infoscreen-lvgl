@@ -176,3 +176,15 @@ Clash 核心按命令行的 `-d`、`-f` 找到配置，读取顶层的 `external
 ## 许可
 
 [MIT](LICENSE)
+
+## 相机
+
+应用 → 相机提供GC05A2实时预览。按OK键，将1944×2592的JPEG照片保存到`/tmp/camera.jpg`，再次拍照覆盖上一张。预览和照片统一向右旋转90度，取景画面在可用区域内保持3:4比例完整显示，画面底部显示「按OK键拍照」；曝光和sensor增益根据RAW亮度自动调整。保存成功提示显示2秒后自动隐藏。返回时界面立即关闭取景，后台停止采集、释放buffer并卸载由应用加载的模块；清理期间再次打开会等旧会话完成后启动。
+
+相机和eSIM扫码入口仅在`/etc/e5/device-profile`为`lym10k`或`t512n`时显示。首次打开时，如果本机没有匹配运行内核的模块，应用会从[e5-linux-camera的modules Release](https://github.com/XiaoMengXinX/e5-linux-camera/releases/tag/modules)自动下载安装`sprd_sensor.ko`、`sprd_flash_drv.ko`和`sprd_camera.ko`。安装会核对设备、内核版本、内核配置以及包和模块的SHA256；没有匹配构建时显示具体错误，返回键可取消下载。
+
+模块安装在`/usr/libexec/e5-infoscreen/camera/`，`kernel.release`记录对应的内核版本。下载安装在后台执行，完成后直接进入取景；模块按相机会话加载、卸载。构建Release只提供外部模块，设备继续运行现有内核。
+
+`src/camera_capture.c`在线程中处理sensor、CSI、DMA-BUF和JPEG编码；`src/camera.c`负责LVGL页面。`src/camera_vendor/`保留采集ABI和GC05A2初始化表，内核模块独立构建。RAW转换使用GRBG Bayer双线性去马赛克、黑电平扣除、自动白平衡和sRGB传递曲线，预览与JPEG共用颜色参数。白平衡通过未过曝的中间亮度采样平滑调整红蓝通道。当前尚未接入sensor专属颜色校准矩阵和ISP降噪。
+
+在eSIM管理的「添加配置文件」页面选择「扫码输入激活码」，将相机对准eSIM二维码。识别到有效的`LPA:1$…`激活码后关闭取景并填入当前SIM的激活码框，保留确认码，下载由用户确认后触发。返回键取消扫码并保留原表单内容。二维码通过静态链接的quirc库在采集线程中识别。
