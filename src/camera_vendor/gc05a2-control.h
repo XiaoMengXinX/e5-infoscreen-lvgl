@@ -52,7 +52,7 @@ static void sensor_power_off(int fd)
 	sensor_u32(fd, SENSOR_IO_SET_IOVDD, 13);
 }
 
-static int sensor_prepare(int fd)
+static int sensor_prepare_gc05a2(int fd)
 {
 	uint16_t address = 0x37;
 	int high, low;

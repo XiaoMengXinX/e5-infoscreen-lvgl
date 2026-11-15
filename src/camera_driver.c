@@ -30,7 +30,7 @@ static bool profile(char *value, size_t size)
     fclose(f);
     if (!read) return false;
     value[strcspn(value, "\r\n")] = 0;
-    return !strcmp(value, "lym10k") || !strcmp(value, "t512n");
+    return !strcmp(value, "e5") || !strcmp(value, "lym10k") || !strcmp(value, "t512n");
 }
 
 bool camera_driver_supported(void)

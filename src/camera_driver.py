@@ -28,7 +28,7 @@ def config_sha256(text):
 
 
 def select_build(manifest, profile, release, config_hash):
-    if profile not in ('lym10k', 't512n'):
+    if profile not in ('e5', 'lym10k', 't512n'):
         raise ValueError('Unsupported camera profile: ' + profile)
     if not isinstance(manifest, dict) or type(manifest.get('schema')) is not int or manifest['schema'] != 1:
         raise ValueError('Unsupported camera manifest schema')
@@ -100,7 +100,7 @@ def download(url, destination):
 
 
 def install(profile, stage):
-    if profile not in ('lym10k', 't512n'):
+    if profile not in ('e5', 'lym10k', 't512n'):
         raise ValueError('Unsupported camera profile: ' + profile)
     if any(stage.iterdir()):
         raise ValueError('Camera staging directory must be empty')

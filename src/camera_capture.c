@@ -21,7 +21,10 @@
 #include "camera_qr.h"
 #define __user
 #include "camera_vendor/sprd_camsys.h"
+#define sensor_prepare sensor_prepare_gc05a2
 #include "camera_vendor/gc05a2-control.h"
+#undef sensor_prepare
+#include "camera_vendor/gc5035-control.h"
 
 #define WIDTH 2592
 #define HEIGHT 1944
@@ -294,7 +297,13 @@ static void *session(void *unused)
     if (stopping()) goto out;
     sensor = open("/dev/sprd_sensor", O_RDWR | O_CLOEXEC);
     if (sensor < 0) { failure("open sensor"); goto out; }
-    if (sensor_prepare(sensor)) { failure("initialize GC05A2"); goto out; }
+    char profile[64] = {0};
+    FILE *profile_file = fopen("/etc/e5/device-profile", "r");
+    if (profile_file) { fgets(profile, sizeof profile, profile_file); fclose(profile_file); }
+    bool e5 = !strncmp(profile, "e5", 2);
+    if ((e5 ? sensor_prepare_gc5035(sensor) : sensor_prepare_gc05a2(sensor))) {
+        failure(e5 ? "initialize GC5035" : "initialize GC05A2"); goto out;
+    }
     if (stopping()) goto out;
     image = open("/dev/sprd_image", O_RDWR | O_CLOEXEC);
     if (image < 0) { failure("open camera"); goto out; }
@@ -341,7 +350,7 @@ static void *session(void *unused)
     output.is_reserved_buf = 1;
     if (command(image, SPRD_IMG_IO_SET_FRAME_ADDR, &output, "reserve frame")) goto out;
     if (stopping()) goto out;
-    struct sensor_if_cfg_tag csi = {.if_type = 1, .phy_id = 3, .lane_num = 2, .bps_per_lane = 896, .lane_seq = 0x0123};
+    struct sensor_if_cfg_tag csi = {.if_type = 1, .phy_id = e5 ? 4 : 3, .lane_num = 2, .bps_per_lane = e5 ? 876 : 896, .lane_seq = 0x0123};
     if (command(sensor, SENSOR_IO_IF_CFG, &csi, "open CSI")) goto out;
     csi_open = true;
     if (command(image, SPRD_IMG_IO_STREAM_ON, &mode, "start capture")) goto out;
