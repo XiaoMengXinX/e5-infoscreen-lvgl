@@ -22,9 +22,14 @@ target_compile_options(lvgl PRIVATE -O2 -w)
 add_library(cjson STATIC ${CJSON_DIR}/cJSON.c)
 target_include_directories(cjson PUBLIC ${CJSON_DIR})
 
+add_library(quirc STATIC third_party/quirc/quirc.c third_party/quirc/decode.c
+    third_party/quirc/identify.c third_party/quirc/version_db.c)
+target_include_directories(quirc PUBLIC ${CMAKE_SOURCE_DIR}/third_party/quirc)
+target_compile_options(quirc PRIVATE -O2)
+
 file(GLOB APP_SOURCES CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/src/*.c ${CMAKE_SOURCE_DIR}/src/pages/*.c)
 add_executable(e5-infoscreen-ui ${APP_SOURCES})
 target_include_directories(e5-infoscreen-ui PRIVATE ${CMAKE_SOURCE_DIR}/src ${GEN_DIR} ${FREETYPE_INCLUDE_DIRS} ${DRM_INCLUDE_DIRS} ${JPEG_INCLUDE_DIRS})
 target_compile_options(e5-infoscreen-ui PRIVATE -O2 -Wall -Wextra -Werror -Wno-unused-parameter)
 target_link_options(e5-infoscreen-ui PRIVATE -static -s -Wl,--gc-sections)
-target_link_libraries(e5-infoscreen-ui PRIVATE lvgl cjson ${FREETYPE_STATIC_LIBRARIES} ${JPEG_STATIC_LIBRARIES} m pthread)
+target_link_libraries(e5-infoscreen-ui PRIVATE lvgl cjson quirc ${FREETYPE_STATIC_LIBRARIES} ${JPEG_STATIC_LIBRARIES} m pthread)
