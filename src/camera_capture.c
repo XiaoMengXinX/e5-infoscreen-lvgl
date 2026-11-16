@@ -25,6 +25,9 @@
 #include "camera_vendor/gc05a2-control.h"
 #undef sensor_prepare
 #include "camera_vendor/gc5035-control.h"
+#include "camera_vendor/sp5508-control.h"
+
+enum sensor_model { SENSOR_GC05A2, SENSOR_GC5035, SENSOR_SP5508 };
 
 #define WIDTH 2592
 #define HEIGHT 1944
@@ -165,10 +168,10 @@ static void rgb(const uint16_t *raw, int x, int y, const struct color_processing
     out[2] = color->lookup[2][b];
 }
 
-/* The stock sensor uses gain 0x0400..0x4000, quantized to eight units.
- * Keep the 2032-line frame period and leave its 16-line exposure margin. */
-static int auto_exposure(int sensor, const uint16_t *raw, unsigned zoom, unsigned *exposure, unsigned *gain)
+/* Exposure is measured in lines; gain uses 1024 for unity across sensors. */
+static int auto_exposure(int sensor, const uint16_t *raw, unsigned zoom, unsigned *exposure, unsigned *gain, enum sensor_model model)
 {
+    if (model == SENSOR_GC5035) return 0;
     unsigned histogram[1024] = {0}, samples = 0;
     int x0, y0, width, height;
     zoom_crop(zoom, &x0, &y0, &width, &height);
@@ -190,14 +193,20 @@ static int auto_exposure(int sensor, const uint16_t *raw, unsigned zoom, unsigne
     if (ratio > 2) ratio = 2;
     if (ratio < 0.5) ratio = 0.5;
     double product = *exposure * (*gain / 1024.0) * ratio;
-    if (product < 4) product = 4;
-    if (product > 2016 * 16) product = 2016 * 16;
-    unsigned lines = product > 2016 ? 2016 : (unsigned)product;
-    unsigned code = (unsigned)(product / lines * 1024) & ~7u;
+    unsigned min_lines = model == SENSOR_SP5508 ? 8 : 4;
+    unsigned max_lines = model == SENSOR_SP5508 ? 1981 : 2016;
+    unsigned max_gain = model == SENSOR_SP5508 ? 15872 : 16384;
+    if (product < min_lines) product = min_lines;
+    if (product > max_lines * (max_gain / 1024.0)) product = max_lines * (max_gain / 1024.0);
+    unsigned lines = product > max_lines ? max_lines : (unsigned)product;
+    unsigned step = model == SENSOR_SP5508 ? 64 : 8;
+    unsigned code = (unsigned)(product / lines * 1024) / step * step;
     if (code < 1024) code = 1024;
-    if (code > 16384) code = 16384;
+    if (code > max_gain) code = max_gain;
     if (lines == *exposure && code == *gain) return 0;
-    if (sensor_write(sensor, 0x0202, lines >> 8) || sensor_write(sensor, 0x0203, lines & 255) ||
+    if (model == SENSOR_SP5508) {
+        if (sensor_exposure_sp5508(sensor, lines, code)) return -1;
+    } else if (sensor_write(sensor, 0x0202, lines >> 8) || sensor_write(sensor, 0x0203, lines & 255) ||
         sensor_write(sensor, 0x0204, code >> 8) || sensor_write(sensor, 0x0205, code & 0xf8)) return -1;
     *exposure = lines;
     *gain = code;
@@ -294,6 +303,7 @@ static void *session(void *unused)
     int sensor = -1, image = -1, heap = -1, reserved = -1;
     int buffers[BUFFERS] = {-1, -1, -1};
     void *maps[BUFFERS] = {MAP_FAILED, MAP_FAILED, MAP_FAILED};
+    enum sensor_model model = SENSOR_GC05A2;
     bool resources = false, streaming = false, csi_open = false;
     const char *modules[] = {"sprd_sensor", "sprd_flash_drv", "sprd_camera"};
     bool loaded[3] = {0};
@@ -329,8 +339,17 @@ static void *session(void *unused)
     FILE *profile_file = fopen("/etc/e5/device-profile", "r");
     if (profile_file) { fgets(profile, sizeof profile, profile_file); fclose(profile_file); }
     bool e5 = !strncmp(profile, "e5", 2);
-    if ((e5 ? sensor_prepare_gc5035(sensor) : sensor_prepare_gc05a2(sensor))) {
-        failure(e5 ? "initialize GC5035" : "initialize GC05A2"); goto out;
+    if (e5) {
+        model = SENSOR_SP5508;
+        if (sensor_identify_sp5508(sensor) == 0) {
+            if (sensor_configure_sp5508(sensor)) { failure("configure SP5508"); goto out; }
+        } else {
+            sensor_power_off_sp5508(sensor);
+            model = SENSOR_GC5035;
+            if (sensor_prepare_gc5035(sensor)) { failure("identify E5 camera (SP5508/GC5035)"); goto out; }
+        }
+    } else if (sensor_prepare_gc05a2(sensor)) {
+        failure("initialize GC05A2"); goto out;
     }
     if (stopping()) goto out;
     image = open("/dev/sprd_image", O_RDWR | O_CLOEXEC);
@@ -378,15 +397,17 @@ static void *session(void *unused)
     output.is_reserved_buf = 1;
     if (command(image, SPRD_IMG_IO_SET_FRAME_ADDR, &output, "reserve frame")) goto out;
     if (stopping()) goto out;
-    struct sensor_if_cfg_tag csi = {.if_type = 1, .phy_id = e5 ? 4 : 3, .lane_num = 2, .bps_per_lane = e5 ? 876 : 896, .lane_seq = 0x0123};
+    struct sensor_if_cfg_tag csi = {.if_type = 1, .phy_id = e5 ? 4 : 3, .lane_num = 2, .bps_per_lane = model == SENSOR_SP5508 ? 936 : e5 ? 876 : 896, .lane_seq = 0x0123};
     if (command(sensor, SENSOR_IO_IF_CFG, &csi, "open CSI")) goto out;
     csi_open = true;
     if (command(image, SPRD_IMG_IO_STREAM_ON, &mode, "start capture")) goto out;
     streaming = true;
-    if ((e5 ? sensor_write_gc5035(sensor, 0x3e, 0x91) : sensor_write(sensor, 0x0100, 1))) {
+    if ((model == SENSOR_SP5508 ? sensor_stream_sp5508(sensor, true) :
+         model == SENSOR_GC5035 ? sensor_write8(sensor, 0x3e, 0x91) : sensor_write(sensor, 0x0100, 1))) {
         failure("sensor stream"); goto out;
     }
-    unsigned frames = 0, exposure = 1842, gain = 1024;
+    unsigned frames = 0, exposure = model == SENSOR_SP5508 ? 1590 : 1842,
+             gain = model == SENSOR_SP5508 ? 16320 : 1024;
     while (!stopping()) {
         struct sprd_img_read_op event = {.cmd = SPRD_IMG_GET_IMG_BUFFER};
         ssize_t n = read(image, &event, sizeof event);
@@ -411,7 +432,7 @@ static void *session(void *unused)
             /* Keep metering off the hot path: the preview can use every frame,
              * while exposure and white balance only need a few updates per
              * second to converge. */
-            if (frames % 6 == 0 && auto_exposure(sensor, raw, zoom, &exposure, &gain)) {
+            if (frames % 6 == 0 && auto_exposure(sensor, raw, zoom, &exposure, &gain, model)) {
                 failure("set exposure"); frame_failed = true; goto release_frame;
             }
             if (decoder && frames % 12 == 0)
@@ -455,7 +476,9 @@ release_frame:
     }
 out:
     if (sensor >= 0) {
-        if (e5) sensor_write_gc5035(sensor, 0x3e, 0);
+        if (model == SENSOR_SP5508) {
+            if (streaming) sensor_stream_sp5508(sensor, false);
+        } else if (model == SENSOR_GC5035) sensor_write8(sensor, 0x3e, 0);
         else sensor_write(sensor, 0x0100, 0);
     }
     uint32_t off = 0;
@@ -475,7 +498,18 @@ out:
     if (reserved >= 0) close(reserved);
     if (heap >= 0) close(heap);
     if (image >= 0) close(image);
-    if (sensor >= 0) { sensor_power_off(sensor); close(sensor); }
+    if (sensor >= 0) {
+        if (model == SENSOR_SP5508) sensor_power_off_sp5508(sensor);
+        else if (model == SENSOR_GC5035) {
+            sensor_u32(sensor, SENSOR_IO_RST_LEVEL, 0);
+            sensor_u32(sensor, SENSOR_IO_PD, 0);
+            sensor_u32(sensor, SENSOR_IO_SET_MCLK, 0);
+            sensor_u32(sensor, SENSOR_IO_SET_AVDD, 13);
+            sensor_u32(sensor, SENSOR_IO_SET_DVDD, 13);
+            sensor_u32(sensor, SENSOR_IO_SET_IOVDD, 13);
+        } else sensor_power_off(sensor);
+        close(sensor);
+    }
     for (int i = 2; i >= 0; i--) if (loaded[i] && syscall(SYS_delete_module, modules[i], O_NONBLOCK) < 0)
         failure("unload camera module");
     if (decoder) quirc_destroy(decoder);
