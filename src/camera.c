@@ -3,8 +3,10 @@
 #include "camera_driver.h"
 #include "camera_driver_ui.h"
 #include "theme.h"
+#include "torch.h"
 #include "ui.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
+#include <errno.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,13 +17,14 @@ static struct {
     lv_timer_t *timer;
     enum { CLOSED, INSTALLING, CAPTURING } phase;
     unsigned photos, zoom;
-    bool scan_mode;
+    bool scan_mode, torch_checked, torch_available;
     char last_qr[256];
     uint32_t saved_at;
     void (*on_code)(const char *activation);
     uint32_t pixels[CAMERA_PREVIEW_WIDTH * CAMERA_PREVIEW_HEIGHT];
     lv_image_dsc_t frame;
 } camera;
+static void set_zoom(unsigned zoom);
 
 static void refresh(lv_timer_t *timer)
 {
@@ -75,7 +78,14 @@ static void refresh(lv_timer_t *timer)
         ui_set_text(camera.status, L("请对准eSIM激活码二维码", "Point at an eSIM activation QR code"));
     else
         ui_set_text(camera.status, L("正在打开相机…", "Opening camera…"));
-    if (status.ready && !status.failed) idle_reset();
+    if (status.ready && !status.failed) {
+        idle_reset();
+        if (!camera.torch_checked) {
+            camera.torch_checked = true;
+            camera.torch_available = torch_available();
+            set_zoom(camera.zoom);
+        }
+    }
 }
 
 static void fit_preview(void)
@@ -106,16 +116,21 @@ static void set_zoom(unsigned zoom)
 {
     camera.zoom = zoom;
     update_scan_region();
-    ui_set_fmt(camera.hint, "%s  %u.%02u×",
+    const char *light_hint = "";
+    if (camera.torch_available)
+        light_hint = torch_enabled() ? L("\n*键关闭补光", "\n* to turn light off")
+                                    : L("\n*键开启补光", "\n* to turn light on");
+    ui_set_fmt(camera.hint, "%s  %u.%02u×%s",
                camera.on_code ? L("上下键缩放，对准二维码，返回键取消", "Up/down to zoom; align QR code; Back cancels")
                : camera.scan_mode ? L("扫码模式  左右键切换，返回键退出", "Scan mode  Left/right to switch; Back exits")
                                   : L("拍照模式  左右键切换，按OK键拍照", "Photo mode  Left/right to switch; OK to take a photo"),
-               zoom / 100, zoom % 100);
+               zoom / 100, zoom % 100, light_hint);
 }
 
 void camera_close(void)
 {
     if (camera.phase == CLOSED) return;
+    if (torch_enabled() && !torch_set(false)) perror("turn off camera light");
     if (camera.phase == INSTALLING) {
         camera_driver_ui_cancel();
     }
@@ -274,6 +289,8 @@ static void open_camera(void (*on_code)(const char *activation))
     camera.last_qr[0] = 0;
     camera.zoom = 100;
     camera.scan_mode = on_code != NULL;
+    camera.torch_checked = false;
+    camera.torch_available = false;
     lv_obj_set_hidden(camera.scan_frame, on_code == NULL);
     for (int i = 0; i < 4; i++) lv_obj_set_hidden(camera.scan_shade[i], on_code == NULL);
     lv_obj_set_hidden(camera.panel, false);
@@ -311,8 +328,19 @@ bool camera_scanning(void)
 
 bool camera_key(const struct key_event *key)
 {
+    if (key->kind == KEY_KIND_CHAR && key->ch == '*' && camera.torch_available) {
+        if (camera.phase == CAPTURING && key->down && !key->repeat) {
+            if (torch_set(!torch_enabled())) set_zoom(camera.zoom);
+            else {
+                dialog_open(L("补光灯操作失败", "Camera light failed"), strerror(errno));
+                dialog_cancel();
+            }
+        }
+        return true;
+    }
     if (key->kind == KEY_KIND_LEFT || key->kind == KEY_KIND_RIGHT) {
         if (camera.phase == CAPTURING && !camera.on_code && key->down && !key->repeat) {
+            if (torch_enabled() && !torch_set(false)) perror("turn off camera light");
             camera.scan_mode = !camera.scan_mode;
             camera.last_qr[0] = 0;
             lv_obj_set_hidden(camera.scan_frame, !camera.scan_mode);
