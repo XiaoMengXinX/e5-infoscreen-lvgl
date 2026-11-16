@@ -341,6 +341,7 @@ static void load_categories(void)
 }
 
 static const cJSON *item(struct view *v, const char *id);
+static const cJSON *category(const char *id);
 static void open_editor(struct view *v, const cJSON *it);
 
 /* An item to open as soon as its category has loaded. */
@@ -923,6 +924,8 @@ static void render_menu(void)
         label_text(jget(c, "label"), label, sizeof label);
         if (!hidden)
             row(key, icon_for(jstr(c, "id"), NULL), label, NULL, ROW_CHEVRON);
+        if (jstr_is(c, "id", "notify") && category("plugin:phone"))
+            row("phone-settings", "phone", L("电话", "Phone"), NULL, ROW_CHEVRON);
     }
 }
 
@@ -1899,7 +1902,11 @@ static void clicked(const char *key)
     const char *colon = strchr(key, ':');
     snprintf(k, sizeof k, "%.*s", colon ? (int)(colon - key) : 0, key);
     const char *arg = colon ? colon + 1 : "";
-    if (!strcmp(k, "cat")) {
+    if (!strcmp(key, "phone-settings") && v->kind == V_MENU) {
+        const cJSON *c = category("plugin:phone");
+        if (c)
+            open_category(c);
+    } else if (!strcmp(k, "cat")) {
         const cJSON *c = cJSON_GetArrayItem(categories, atoi(arg));
         if (c)
             open_category(c);

@@ -16,11 +16,6 @@ static void on_phone(lv_event_t *e)
     phone_open();
 }
 
-static void on_phone_settings(lv_event_t *e)
-{
-    settings_open_category("plugin:phone", L("电话设置", "Phone settings"), NULL);
-}
-
 static void show(lv_obj_t *view)
 {
     if (view != list && !lv_obj_is_hidden(list)) {
