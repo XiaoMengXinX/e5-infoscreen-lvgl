@@ -1,14 +1,23 @@
 #include "app.h"
 #include "clash.h"
 #include "camera.h"
+#include "camera_driver.h"
+#include "camera_driver_ui.h"
 #include "esim.h"
 #include "input.h"
+#include "icons.h"
 #include "speedtest.h"
 #include "stk.h"
 #include "theme.h"
+#include "torch.h"
 #include "ui.h"
+#include <errno.h>
+#include <stdio.h>
+#include <string.h>
 
-static lv_obj_t *list, *speed, *toolkit, *toolkit_row, *esim, *clash, *camera;
+static lv_obj_t *list, *speed, *toolkit, *toolkit_row, *esim, *clash, *camera, *flashlight;
+static lv_obj_t *light_status, *light_button, *light_icon;
+static bool light_installing;
 /* The row the keys were on when an app opened over the list. */
 static lv_obj_t *list_focus;
 
@@ -25,6 +34,13 @@ static void show(lv_obj_t *view)
     }
     if (view != camera)
         camera_close();
+    if (view != flashlight && !lv_obj_is_hidden(flashlight)) {
+        if (light_installing) {
+            camera_driver_ui_cancel();
+            light_installing = false;
+        }
+        if (!torch_set(false)) perror("turn off flashlight");
+    }
     if (view != speed)
         speedtest_stop();
     if (view != toolkit)
@@ -39,6 +55,7 @@ static void show(lv_obj_t *view)
     lv_obj_set_hidden(esim, view != esim);
     lv_obj_set_hidden(clash, view != clash);
     lv_obj_set_hidden(camera, view != camera);
+    lv_obj_set_hidden(flashlight, view != flashlight);
     if (view == list && list_focus) {
         ui_focus_key(list_focus);
         list_focus = NULL;
@@ -80,6 +97,51 @@ static void on_camera(lv_event_t *e)
     camera_open();
 }
 
+static void light_refresh(void)
+{
+    bool on = torch_enabled();
+    lv_color_t color = on ? theme.fair : theme.dim;
+    lv_color_t surface = on ? lv_color_mix(theme.fair, theme.bg, 35) : theme.surface;
+    ui_set_text(light_status, on ? L("已开启", "On") : L("已关闭", "Off"));
+    lv_obj_set_style_text_color(light_status, color, 0);
+    lv_obj_set_style_text_color(light_icon, color, 0);
+    lv_obj_set_style_bg_color(light_button, surface, 0);
+    lv_obj_set_style_bg_color(light_button, lv_color_mix(color, surface, 40), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(light_button, on ? theme.fair : theme.line, 0);
+    lv_obj_set_style_outline_color(light_button, color, LV_STATE_FOCUS_KEY);
+}
+
+static void light_toggle(lv_event_t *event)
+{
+    if (!torch_set(!torch_enabled())) {
+        dialog_open(L("手电筒操作失败", "Flashlight failed"), strerror(errno));
+        dialog_cancel();
+    }
+    light_refresh();
+}
+
+static void light_deleted(lv_event_t *event)
+{
+    if (!torch_set(false)) perror("turn off flashlight");
+}
+
+static void light_installed(bool success)
+{
+    light_installing = false;
+    if (!success) show(list);
+}
+
+static void on_flashlight(lv_event_t *event)
+{
+    show(flashlight);
+    light_refresh();
+    ui_focus_key(light_button);
+    if (!camera_driver_ready()) {
+        light_installing = true;
+        camera_driver_ui_open(light_installed);
+    }
+}
+
 static void create(lv_obj_t *page)
 {
     list_focus = NULL;
@@ -90,6 +152,31 @@ static void create(lv_obj_t *page)
     ui_row(list, "chip", L("eSIM 管理", "eSIM Manager"), NULL, ROW_CHEVRON, on_esim, NULL);
     ui_row(list, "globe", L("Mihomo 面板", "Mihomo panel"), NULL, ROW_CHEVRON, on_clash, NULL);
     if (camera_supported()) ui_row(list, "camera", L("相机", "Camera"), NULL, ROW_CHEVRON, on_camera, NULL);
+    if (torch_supported()) ui_row(list, "flashlight", L("手电筒", "Flashlight"), NULL, ROW_CHEVRON, on_flashlight, NULL);
+    flashlight = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
+    if (torch_supported()) {
+        lv_obj_add_event_cb(flashlight, light_deleted, LV_EVENT_DELETE, NULL);
+        lv_obj_set_height(flashlight, LV_PCT(100));
+        lv_obj_set_flex_align(flashlight, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_set_style_pad_row(flashlight, S(22), 0);
+        lv_obj_t *title = ui_text(flashlight, 22, true, theme.text);
+        ui_set_text(title, L("手电筒", "Flashlight"));
+        light_button = ui_button(flashlight, "", light_toggle, NULL);
+        lv_obj_set_size(light_button, S(148), S(148));
+        lv_obj_set_style_radius(light_button, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_border_width(light_button, 1, 0);
+        lv_obj_set_layout(light_button, LV_LAYOUT_NONE);
+        lv_obj_set_hidden(lv_obj_get_child(light_button, 0), true);
+        light_icon = icon_create(light_button, "flashlight", S(64));
+        lv_obj_center(light_icon);
+        light_status = ui_text(flashlight, 18, true, theme.dim);
+        lv_obj_t *hint = ui_text(flashlight, 12, false, theme.dim);
+        ui_set_text(hint, L("轻触或按OK键开关\n返回时关闭", "Tap or press OK to toggle\nBack turns it off"));
+        lv_obj_set_width(hint, LV_PCT(100));
+        lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+        light_refresh();
+    }
+    lv_obj_set_hidden(flashlight, true);
     camera = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
     if (camera_supported()) camera_create(camera);
     lv_obj_set_hidden(camera, true);
@@ -148,6 +235,13 @@ static void shown(void)
 /* In an app Left and Right do not change the page. */
 static bool key(const struct key_event *k)
 {
+    if (!lv_obj_is_hidden(flashlight)) {
+        if (k->kind == KEY_KIND_OK) {
+            if (k->down && !k->repeat && !light_installing) light_toggle(NULL);
+            return true;
+        }
+        return k->kind == KEY_KIND_LEFT || k->kind == KEY_KIND_RIGHT;
+    }
     if (camera_scanning())
         return camera_key(k);
     if (!lv_obj_is_hidden(camera))
