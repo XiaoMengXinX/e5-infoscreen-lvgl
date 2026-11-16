@@ -79,7 +79,6 @@ static void create(lv_obj_t *page)
     toolkit_row = ui_row(list, "simcard", L("SIM 卡应用", "SIM toolkit"), NULL, ROW_CHEVRON, on_toolkit, NULL);
     ui_row(list, "chip", L("eSIM 管理", "eSIM Manager"), NULL, ROW_CHEVRON, on_esim, NULL);
     ui_row(list, "globe", L("Mihomo 面板", "Mihomo panel"), NULL, ROW_CHEVRON, on_clash, NULL);
-    ui_row(list, "settings", L("电话设置", "Phone settings"), NULL, ROW_CHEVRON, on_phone_settings, NULL);
     speed = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
     /* The dial is sized for the panel; larger display sizes would push it off. */
     float scale = theme_cap(1);
