@@ -89,12 +89,12 @@ static void create(lv_obj_t *page)
 {
     list_focus = NULL;
     list = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
-    if (camera_supported()) ui_row(list, "camera", L("相机", "Camera"), NULL, ROW_CHEVRON, on_camera, NULL);
     ui_row(list, "phone", L("电话", "Phone"), NULL, ROW_CHEVRON, on_phone, NULL);
     ui_row(list, "traffic", L("网速测试", "Speed test"), NULL, ROW_CHEVRON, on_speedtest, NULL);
     toolkit_row = ui_row(list, "simcard", L("SIM 卡应用", "SIM toolkit"), NULL, ROW_CHEVRON, on_toolkit, NULL);
     ui_row(list, "chip", L("eSIM 管理", "eSIM Manager"), NULL, ROW_CHEVRON, on_esim, NULL);
     ui_row(list, "globe", L("Mihomo 面板", "Mihomo panel"), NULL, ROW_CHEVRON, on_clash, NULL);
+    if (camera_supported()) ui_row(list, "camera", L("相机", "Camera"), NULL, ROW_CHEVRON, on_camera, NULL);
     ui_row(list, "settings", L("电话设置", "Phone settings"), NULL, ROW_CHEVRON, on_phone_settings, NULL);
     camera = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
     if (camera_supported()) camera_create(camera);
