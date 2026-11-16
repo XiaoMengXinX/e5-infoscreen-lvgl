@@ -61,7 +61,6 @@ static int sensor_prepare_gc5035(int fd)
     if (high < 0 || low < 0) return -1;
     printf("sensor GC5035 ID: %02x%02x\n", high, low);
     if (high != 0x50 || low != 0x35) { errno = ENODEV; return -1; }
-    if (sensor_write_gc5035(fd, 0x0100, 0)) return -1;
     static const struct { uint16_t addr; uint8_t value; } mode[] = {
         {0xfe, 0x00},
         {0x3e, 0x01},

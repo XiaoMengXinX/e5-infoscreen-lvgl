@@ -5,6 +5,7 @@
 #include "ui.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 
 static struct {
@@ -12,7 +13,9 @@ static struct {
     lv_obj_t *scan_shade[4];
     lv_timer_t *timer;
     enum { CLOSED, INSTALLING, CAPTURING, INSTALL_FAILED } phase;
-    unsigned photos;
+    unsigned photos, zoom;
+    bool scan_mode;
+    char last_qr[256];
     uint32_t saved_at;
     void (*on_code)(const char *activation);
     uint32_t pixels[CAMERA_PREVIEW_WIDTH * CAMERA_PREVIEW_HEIGHT];
@@ -47,6 +50,19 @@ static void refresh(lv_timer_t *timer)
     camera.photos = status.photos;
     bool show_saved = status.saved && lv_tick_elaps(camera.saved_at) < 2000;
     bool other_qr = camera.on_code && status.other_qr;
+    bool debug_qr = camera.scan_mode && status.qr[0];
+    if (debug_qr && strcmp(status.qr, camera.last_qr)) {
+        snprintf(camera.last_qr, sizeof camera.last_qr, "%s", status.qr);
+        if (!dialog_is_open()) {
+            dialog_open(L("扫码结果", "QR scan result"), NULL);
+            lv_obj_t *payload = ui_note(dialog_sheet(), status.qr);
+            lv_obj_set_width(payload, LV_PCT(100));
+            lv_label_set_long_mode(payload, LV_LABEL_LONG_MODE_WRAP);
+            dialog_cancel();
+        }
+    } else if (!debug_qr && !dialog_is_open()) {
+        camera.last_qr[0] = 0;
+    }
     lv_obj_set_hidden(camera.status, status.ready && !status.saving && !show_saved && !status.failed && !other_qr);
     if (status.failed)
         ui_set_fmt(camera.status, "%s\n%s", L("相机不可用", "Camera unavailable"), status.error);
@@ -59,6 +75,41 @@ static void refresh(lv_timer_t *timer)
     else
         ui_set_text(camera.status, L("正在打开相机…", "Opening camera…"));
     if (status.ready && !status.failed) idle_reset();
+}
+
+static void fit_preview(void)
+{
+    int32_t width = lv_obj_get_content_width(camera.panel);
+    int32_t height = lv_obj_get_content_height(camera.panel);
+    uint32_t fit = LV_MIN(width * 256 / CAMERA_PREVIEW_WIDTH,
+                          height * 256 / CAMERA_PREVIEW_HEIGHT);
+    lv_image_set_scale(camera.image, fit);
+    lv_obj_invalidate(camera.image);
+}
+
+static void update_scan_region(void)
+{
+    int32_t panel_width = lv_obj_get_content_width(camera.panel);
+    int32_t panel_height = lv_obj_get_content_height(camera.panel);
+    uint32_t fit = LV_MIN(panel_width * 256 / CAMERA_PREVIEW_WIDTH,
+                          panel_height * 256 / CAMERA_PREVIEW_HEIGHT);
+    int32_t image_width = CAMERA_PREVIEW_WIDTH * fit / 256;
+    int32_t image_height = CAMERA_PREVIEW_HEIGHT * fit / 256;
+    int32_t frame_side = LV_MIN(panel_width, panel_height) * 2 / 3;
+    unsigned sensor_x_fraction = (unsigned)frame_side * 10000 / image_height;
+    unsigned sensor_y_fraction = (unsigned)frame_side * 10000 / image_width;
+    camera_capture_set_zoom(camera.zoom, sensor_x_fraction, sensor_y_fraction);
+}
+
+static void set_zoom(unsigned zoom)
+{
+    camera.zoom = zoom;
+    update_scan_region();
+    ui_set_fmt(camera.hint, "%s  %u.%02u×",
+               camera.on_code ? L("上下键缩放，对准二维码，返回键取消", "Up/down to zoom; align QR code; Back cancels")
+               : camera.scan_mode ? L("扫码模式  左右键切换，返回键退出", "Scan mode  Left/right to switch; Back exits")
+                                  : L("拍照模式  左右键切换，按OK键拍照", "Photo mode  Left/right to switch; OK to take a photo"),
+               zoom / 100, zoom % 100);
 }
 
 void camera_close(void)
@@ -103,7 +154,9 @@ static void layout_scan_frame(void)
 static void resize_scan_frame(lv_event_t *event)
 {
     (void)event;
+    fit_preview();
     layout_scan_frame();
+    update_scan_region();
 }
 
 static void shade_scan_corners(lv_event_t *event)
@@ -149,7 +202,8 @@ void camera_create(lv_obj_t *parent)
     };
     camera.image = lv_image_create(camera.panel);
     lv_obj_set_size(camera.image, LV_PCT(100), LV_PCT(100));
-    lv_image_set_inner_align(camera.image, LV_IMAGE_ALIGN_CONTAIN);
+    lv_image_set_inner_align(camera.image, LV_IMAGE_ALIGN_CENTER);
+    lv_image_set_pivot(camera.image, CAMERA_PREVIEW_WIDTH / 2, CAMERA_PREVIEW_HEIGHT / 2);
     lv_image_set_src(camera.image, &camera.frame);
     for (int i = 0; i < 4; i++) {
         camera.scan_shade[i] = lv_obj_create(camera.panel);
@@ -218,23 +272,27 @@ static void open_camera(void (*on_code)(const char *activation))
     camera.phase = CAPTURING;
     camera.on_code = on_code;
     camera.photos = 0;
-    ui_set_text(camera.hint, on_code ? L("将二维码放入框内，返回键取消", "Place QR code inside the frame; Back cancels")
-                                   : L("按OK键拍照", "Press OK to take a photo"));
+    camera.last_qr[0] = 0;
+    camera.zoom = 100;
+    camera.scan_mode = on_code != NULL;
     lv_obj_set_hidden(camera.scan_frame, on_code == NULL);
     for (int i = 0; i < 4; i++) lv_obj_set_hidden(camera.scan_shade[i], on_code == NULL);
     lv_obj_set_hidden(camera.panel, false);
     lv_obj_move_foreground(camera.panel);
     lv_obj_update_layout(camera.panel);
+    fit_preview();
     layout_scan_frame();
+    update_scan_region();
+    set_zoom(camera.zoom);
     lv_obj_set_hidden(camera.status, false);
     if (camera_driver_ready()) {
-        camera_capture_start(on_code != NULL);
+        camera_capture_start(camera.scan_mode);
     } else {
         camera.phase = INSTALLING;
         ui_set_text(camera.status, L("正在下载安装相机驱动…", "Downloading camera driver…"));
         camera_driver_install(installation_progress, installation_done);
     }
-    if (!camera.timer) camera.timer = lv_timer_create(refresh, 100, NULL);
+    if (!camera.timer) camera.timer = lv_timer_create(refresh, 33, NULL);
     refresh(NULL);
 }
 
@@ -255,8 +313,28 @@ bool camera_scanning(void)
 
 bool camera_key(const struct key_event *key)
 {
-    if (key->kind == KEY_KIND_LEFT || key->kind == KEY_KIND_RIGHT) return true;
+    if (key->kind == KEY_KIND_LEFT || key->kind == KEY_KIND_RIGHT) {
+        if (camera.phase == CAPTURING && !camera.on_code && key->down && !key->repeat) {
+            camera.scan_mode = !camera.scan_mode;
+            camera.last_qr[0] = 0;
+            lv_obj_set_hidden(camera.scan_frame, !camera.scan_mode);
+            for (int i = 0; i < 4; i++) lv_obj_set_hidden(camera.scan_shade[i], !camera.scan_mode);
+            camera_capture_start(camera.scan_mode);
+            set_zoom(camera.zoom);
+        }
+        return true;
+    }
+    if (key->kind == KEY_KIND_UP || key->kind == KEY_KIND_DOWN) {
+        if (key->down && !key->repeat) {
+            if (key->kind == KEY_KIND_UP && camera.zoom < 300)
+                set_zoom(camera.zoom + 25);
+            else if (key->kind == KEY_KIND_DOWN && camera.zoom > 100)
+                set_zoom(camera.zoom - 25);
+        }
+        return true;
+    }
     if (key->kind != KEY_KIND_OK) return false;
-    if (camera.phase == CAPTURING && !camera.on_code && key->down && !key->repeat) camera_capture_photo();
+    if (camera.phase == CAPTURING && !camera.on_code && !camera.scan_mode && key->down && !key->repeat)
+        camera_capture_photo();
     return true;
 }

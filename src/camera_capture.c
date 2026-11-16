@@ -35,10 +35,11 @@ static struct {
     pthread_mutex_t lock;
     pthread_t thread;
     bool running, stop, photo, fresh, scan, restart, next_scan;
+    unsigned zoom, sensor_x_fraction, sensor_y_fraction;
     struct camera_status status;
     uint32_t pixels[CAMERA_PREVIEW_WIDTH * CAMERA_PREVIEW_HEIGHT];
     struct timespec progress;
-} capture = {.lock = PTHREAD_MUTEX_INITIALIZER};
+} capture = {.lock = PTHREAD_MUTEX_INITIALIZER, .sensor_x_fraction = 10000, .sensor_y_fraction = 10000};
 
 static void interrupt_read(int sig) { (void)sig; }
 
@@ -92,13 +93,24 @@ static void color_tables(struct color_processing *color)
     }
 }
 
+static void zoom_crop(unsigned zoom, int *x, int *y, int *width, int *height)
+{
+    *width = WIDTH * 100 / (int)zoom;
+    *height = HEIGHT * 100 / (int)zoom;
+    *x = ((WIDTH - *width) / 2) & ~1;
+    *y = ((HEIGHT - *height) / 2) & ~1;
+}
+
 /* Use unsaturated midtones; near-black samples mostly measure read noise.
  * Average similar-channel samples to avoid metering a saturated colored object. */
-static void white_balance(const uint16_t *raw, struct color_processing *color)
+static void white_balance(const uint16_t *raw, unsigned zoom, struct color_processing *color)
 {
     double sums[3] = {0};
     unsigned samples = 0;
-    for (int y = 0; y < HEIGHT; y += 16) for (int x = 0; x < WIDTH; x += 16) {
+    int x0, y0, width, height;
+    zoom_crop(zoom, &x0, &y0, &width, &height);
+    for (int y = y0; y < y0 + height - 2; y += 16)
+        for (int x = x0; x < x0 + width - 2; x += 16) {
         unsigned r = raw[y * WIDTH + x + 1];
         unsigned g = (raw[y * WIDTH + x] + raw[(y + 1) * WIDTH + x + 1]) / 2;
         unsigned b = raw[(y + 1) * WIDTH + x];
@@ -155,10 +167,12 @@ static void rgb(const uint16_t *raw, int x, int y, const struct color_processing
 
 /* The stock sensor uses gain 0x0400..0x4000, quantized to eight units.
  * Keep the 2032-line frame period and leave its 16-line exposure margin. */
-static int auto_exposure(int sensor, const uint16_t *raw, unsigned *exposure, unsigned *gain)
+static int auto_exposure(int sensor, const uint16_t *raw, unsigned zoom, unsigned *exposure, unsigned *gain)
 {
     unsigned histogram[1024] = {0}, samples = 0;
-    for (int y = 0; y < HEIGHT; y += 32) for (int x = 0; x < WIDTH; x += 32) {
+    int x0, y0, width, height;
+    zoom_crop(zoom, &x0, &y0, &width, &height);
+    for (int y = y0; y < y0 + height - 2; y += 32) for (int x = x0; x < x0 + width - 2; x += 32) {
         unsigned green = (raw[y * WIDTH + x] + raw[(y + 1) * WIDTH + x + 1]) / 2;
         histogram[green > 1023 ? 1023 : green]++;
         samples++;
@@ -191,19 +205,33 @@ static int auto_exposure(int sensor, const uint16_t *raw, unsigned *exposure, un
     return 0;
 }
 
-static void scan_frame(struct quirc *decoder, const uint16_t *raw)
+static void scan_frame(struct quirc *decoder, const uint16_t *raw, unsigned zoom,
+                       unsigned sensor_x_fraction, unsigned sensor_y_fraction)
 {
     int w, h;
     uint8_t *gray = quirc_begin(decoder, &w, &h);
-    /* Half-resolution green plane avoids Bayer color artifacts in QR edges. */
+    int crop_width = WIDTH * 100 / (int)zoom;
+    int crop_height = HEIGHT * 100 / (int)zoom;
+    int side = (int)((uint64_t)crop_width * sensor_x_fraction / 10000);
+    int side_y = (int)((uint64_t)crop_height * sensor_y_fraction / 10000);
+    if (side_y < side) side = side_y;
+    int x0 = (WIDTH - side) / 2;
+    int y0 = (HEIGHT - side) / 2;
+    /* Decode only the centered viewfinder square; 2x2 green sampling avoids Bayer color artifacts. */
     for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
-        unsigned value = (raw[y * 2 * WIDTH + x * 2] + raw[(y * 2 + 1) * WIDTH + x * 2 + 1]) / 2;
+        int sx = x0 + x * side / w;
+        int sy = y0 + y * side / h;
+        unsigned value = (raw[sy * WIDTH + sx] + raw[(sy + 1) * WIDTH + sx + 1]) / 2;
         gray[y * w + x] = value > 1023 ? 255 : value / 4;
     }
     quirc_end(decoder);
     char activation[sizeof capture.status.activation];
-    enum camera_qr_result result = camera_qr_decode(decoder, activation, sizeof activation);
+    char payload[sizeof capture.status.qr] = {0};
+    enum camera_qr_result result = camera_qr_decode(decoder, activation, sizeof activation,
+                                                     payload, sizeof payload);
     pthread_mutex_lock(&capture.lock);
+    capture.status.qr[0] = 0;
+    if (payload[0]) memcpy(capture.status.qr, payload, strlen(payload) + 1);
     if (result == CAMERA_QR_ACTIVATION)
         memcpy(capture.status.activation, activation, strlen(activation) + 1);
     else if (result == CAMERA_QR_OTHER)
@@ -276,7 +304,7 @@ static void *session(void *unused)
     if (!preview) { failure("allocate preview"); goto out; }
     if (capture.scan) {
         decoder = quirc_new();
-        if (!decoder || quirc_resize(decoder, WIDTH / 2, HEIGHT / 2)) {
+        if (!decoder || quirc_resize(decoder, 648, 648)) {
             errno = ENOMEM; failure("initialize QR scanner"); goto out;
         }
     }
@@ -355,7 +383,9 @@ static void *session(void *unused)
     csi_open = true;
     if (command(image, SPRD_IMG_IO_STREAM_ON, &mode, "start capture")) goto out;
     streaming = true;
-    if (sensor_write(sensor, e5 ? 0x3e : 0x0100, e5 ? 0x91 : 1)) { failure("sensor stream"); goto out; }
+    if ((e5 ? sensor_write_gc5035(sensor, 0x3e, 0x91) : sensor_write(sensor, 0x0100, 1))) {
+        failure("sensor stream"); goto out;
+    }
     unsigned frames = 0, exposure = 1842, gain = 1024;
     while (!stopping()) {
         struct sprd_img_read_op event = {.cmd = SPRD_IMG_GET_IMG_BUFFER};
@@ -373,14 +403,29 @@ static void *session(void *unused)
         bool frame_failed = false;
         if (++frames >= 3) {
             const uint16_t *raw = maps[slot];
-            if (frames % 6 == 0 && auto_exposure(sensor, raw, &exposure, &gain)) {
+            pthread_mutex_lock(&capture.lock);
+            unsigned zoom = capture.zoom;
+            unsigned sensor_x_fraction = capture.sensor_x_fraction;
+            unsigned sensor_y_fraction = capture.sensor_y_fraction;
+            pthread_mutex_unlock(&capture.lock);
+            /* Keep metering off the hot path: the preview can use every frame,
+             * while exposure and white balance only need a few updates per
+             * second to converge. */
+            if (frames % 6 == 0 && auto_exposure(sensor, raw, zoom, &exposure, &gain)) {
                 failure("set exposure"); frame_failed = true; goto release_frame;
             }
-            if (decoder && frames % 6 == 0) scan_frame(decoder, raw);
-            if (frames == 3 || frames % 6 == 0) white_balance(raw, &color);
+            if (decoder && frames % 12 == 0)
+                scan_frame(decoder, raw, zoom, sensor_x_fraction, sensor_y_fraction);
+            if (frames == 3 || frames % 12 == 0) white_balance(raw, zoom, &color);
+            int crop_width = WIDTH * 100 / (int)zoom;
+            int crop_height = HEIGHT * 100 / (int)zoom;
+            int crop_x = (WIDTH - crop_width) / 2;
+            int crop_y = (HEIGHT - crop_height) / 2;
             for (int y = 0; y < CAMERA_PREVIEW_HEIGHT; y++) for (int x = 0; x < CAMERA_PREVIEW_WIDTH; x++) {
                 uint8_t pixel[3];
-                rgb(raw, y * WIDTH / CAMERA_PREVIEW_HEIGHT, HEIGHT - 1 - x * HEIGHT / CAMERA_PREVIEW_WIDTH, &color, pixel);
+                int raw_x = crop_x + y * crop_width / CAMERA_PREVIEW_HEIGHT;
+                int raw_y = crop_y + (CAMERA_PREVIEW_WIDTH - 1 - x) * crop_height / CAMERA_PREVIEW_WIDTH;
+                rgb(raw, raw_x, raw_y, &color, pixel);
                 preview[y * CAMERA_PREVIEW_WIDTH + x] = 0xff000000u | (pixel[0] << 16) | (pixel[1] << 8) | pixel[2];
             }
             pthread_mutex_lock(&capture.lock);
@@ -409,7 +454,10 @@ release_frame:
         if (command(image, SPRD_IMG_IO_SET_FRAME_ADDR, &output, "requeue frame")) break;
     }
 out:
-    if (sensor >= 0) sensor_write(sensor, e5 ? 0x3e : 0x0100, 0);
+    if (sensor >= 0) {
+        if (e5) sensor_write_gc5035(sensor, 0x3e, 0);
+        else sensor_write(sensor, 0x0100, 0);
+    }
     uint32_t off = 0;
     if (streaming) command(image, SPRD_IMG_IO_STREAM_OFF, &off, "stop capture");
     if (csi_open) {
@@ -515,6 +563,15 @@ void camera_capture_photo(void)
         capture.photo = capture.status.saving = true;
         capture.status.saved = false;
     }
+    pthread_mutex_unlock(&capture.lock);
+}
+
+void camera_capture_set_zoom(unsigned zoom, unsigned sensor_x_fraction, unsigned sensor_y_fraction)
+{
+    pthread_mutex_lock(&capture.lock);
+    capture.zoom = zoom;
+    capture.sensor_x_fraction = sensor_x_fraction;
+    capture.sensor_y_fraction = sensor_y_fraction;
     pthread_mutex_unlock(&capture.lock);
 }
 

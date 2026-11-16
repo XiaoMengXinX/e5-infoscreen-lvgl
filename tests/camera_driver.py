@@ -68,6 +68,13 @@ class DriverTests(unittest.TestCase):
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
                 self.select(**{field: value})
 
+    def test_e5_profile_selects_its_own_build(self):
+        e5 = dict(self.build, profile='e5', kernel_release='6.18.54-e5-mobile4',
+                  asset='sprd-camera-e5-6.18.54-e5-mobile4-arm64.tar.gz')
+        manifest = {'schema': 1, 'builds': [self.build, e5]}
+        self.assertEqual(driver['select_build'](manifest, 'e5', e5['kernel_release'],
+                                                e5['config_sha256']), e5)
+
     def test_manifest_schema_shape_and_ambiguity(self):
         for manifest in ({'schema': 2, 'builds': []}, {'schema': True, 'builds': []},
                          {'schema': 1, 'builds': {}}, {'schema': 1, 'builds': [None]},

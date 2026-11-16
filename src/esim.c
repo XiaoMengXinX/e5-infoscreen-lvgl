@@ -1409,7 +1409,7 @@ bool esim_key(const struct key_event *key)
 {
     if (camera_scanning()) {
         if (key->kind == KEY_KIND_BACK) return false;
-        return true;
+        return camera_key(key);
     }
     lv_obj_t *focused = input_key_focus(input_group());
     if (state.view == V_INTERFACE && focused &&

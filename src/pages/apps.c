@@ -154,6 +154,8 @@ static void shown(void)
 /* In an app Left and Right do not change the page. */
 static bool key(const struct key_event *k)
 {
+    if (camera_scanning())
+        return camera_key(k);
     if (!lv_obj_is_hidden(camera))
         return camera_key(k);
     if (!lv_obj_is_hidden(toolkit))

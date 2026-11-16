@@ -8,6 +8,7 @@ struct camera_status {
     unsigned photos;
     char error[160];
     char activation[4096];
+    char qr[256];
     bool other_qr;
 };
 bool camera_capture_start(bool scan);
@@ -15,4 +16,5 @@ bool camera_capture_start(bool scan);
 void camera_capture_stop(void);
 bool camera_capture_busy(void);
 void camera_capture_photo(void);
+void camera_capture_set_zoom(unsigned zoom, unsigned sensor_x_fraction, unsigned sensor_y_fraction);
 bool camera_capture_update(uint32_t *pixels, struct camera_status *status);

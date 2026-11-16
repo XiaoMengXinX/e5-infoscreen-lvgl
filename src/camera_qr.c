@@ -3,7 +3,8 @@
 #include <stdbool.h>
 #include <string.h>
 
-enum camera_qr_result camera_qr_decode(struct quirc *decoder, char *activation, size_t size)
+enum camera_qr_result camera_qr_decode(struct quirc *decoder, char *activation, size_t size,
+                                       char *payload, size_t payload_size)
 {
     enum camera_qr_result result = CAMERA_QR_NONE;
     for (int i = 0; i < quirc_count(decoder); i++) {
@@ -13,6 +14,10 @@ enum camera_qr_result camera_qr_decode(struct quirc *decoder, char *activation, 
         quirc_decode_error_t error = quirc_decode(&code, &data);
         if (error == QUIRC_ERROR_DATA_ECC) { quirc_flip(&code); error = quirc_decode(&code, &data); }
         if (error) continue;
+        if (payload_size > 1 && data.payload_len > 0 && data.payload_len < (int)payload_size) {
+            memcpy(payload, data.payload, data.payload_len);
+            payload[data.payload_len] = 0;
+        }
         bool valid = data.payload_len > 6 && data.payload_len < (int)size &&
                      !memcmp(data.payload, "LPA:1$", 6);
         for (int j = 0; valid && j < data.payload_len; j++)
