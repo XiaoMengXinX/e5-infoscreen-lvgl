@@ -1,6 +1,7 @@
 #include "camera_driver.h"
 #include "camera_driver_script.h"
 #include "child.h"
+#include "torch.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -82,6 +83,7 @@ void camera_driver_commit(char *value, size_t size)
 
 static bool unload(void)
 {
+    if (!torch_set(false)) return false;
     const char *modules[] = {"sprd_camera", "sprd_flash_drv", "sprd_sensor"};
     for (size_t i = 0; i < sizeof modules / sizeof *modules; i++)
         if (syscall(SYS_delete_module, modules[i], O_NONBLOCK) < 0 && errno != ENOENT)
@@ -121,7 +123,9 @@ static void installed(int status)
 {
     bool success = status == 0;
     if (success && !unload()) {
-        report("@error Camera driver is in use; close the camera and retry");
+        char error[256];
+        snprintf(error, sizeof error, "@error Cannot unload camera drivers: %s", strerror(errno));
+        report(error);
         success = false;
     }
     if (success) {

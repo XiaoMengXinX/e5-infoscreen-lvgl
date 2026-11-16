@@ -1,6 +1,7 @@
 /* Settings are described by /api/settings; this page renders that model as a
  * stack of views: menu → category → editor, plus the dedicated views below. */
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -615,7 +616,7 @@ static void local_save(const cJSON *it, const cJSON *value)
         if (camera_driver_uninstall())
             toast("%s", L("驱动已卸载", "Driver uninstalled"));
         else
-            toast("%s", L("卸载失败，请关闭相机后重试", "Uninstall failed; close the camera and retry"));
+            toast(L("卸载失败：%s", "Uninstall failed: %s"), strerror(errno));
         camera_driver_changed(false);
         return;
     }
