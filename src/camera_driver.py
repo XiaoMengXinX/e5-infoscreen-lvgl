@@ -40,6 +40,8 @@ def select_build(manifest, profile, release, config_hash):
     if len(matches) != 1:
         raise ValueError(f'Expected one camera build for {profile}, kernel {release}; found {len(matches)}')
     build = matches[0]
+    if not isinstance(build.get('driver_commit'), str) or not re.fullmatch(r'[0-9a-f]{40}', build['driver_commit']):
+        raise ValueError('Invalid camera driver commit')
     if build.get('config_sha256') != config_hash:
         raise ValueError('Camera build kernel config checksum mismatch')
     asset = build.get('asset')
@@ -119,6 +121,7 @@ def install(profile, stage):
         print('@install', flush=True)
         unpack_modules(archive, stage, build)
         archive.unlink()
+        (stage / 'build.commit').write_text(build['driver_commit'] + '\n')
         (stage / 'kernel.release').write_text(release + '\n')
     finally:
         manifest.unlink(missing_ok=True)

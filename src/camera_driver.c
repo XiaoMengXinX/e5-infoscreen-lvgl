@@ -1,15 +1,18 @@
 #include "camera_driver.h"
 #include "camera_driver_script.h"
 #include "child.h"
+#include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #define DRIVER_DIR "/usr/libexec/e5-infoscreen/camera"
-static const char *files[] = {"sprd_sensor.ko", "sprd_flash_drv.ko", "sprd_camera.ko", "kernel.release"};
+static const char *files[] = {"sprd_sensor.ko", "sprd_flash_drv.ko", "sprd_camera.ko", "build.commit", "kernel.release"};
 static struct child installer;
 static char stage[256];
 static void (*completed)(bool);
@@ -58,6 +61,45 @@ bool camera_driver_ready(void)
     return true;
 }
 
+bool camera_driver_present(void)
+{
+    for (size_t i = 0; i < sizeof files / sizeof *files; i++) {
+        char path[256];
+        snprintf(path, sizeof path, DRIVER_DIR "/%s", files[i]);
+        if (!access(path, F_OK)) return true;
+    }
+    return false;
+}
+
+void camera_driver_commit(char *value, size_t size)
+{
+    value[0] = 0;
+    FILE *f = fopen(DRIVER_DIR "/build.commit", "r");
+    if (!f) return;
+    if (fgets(value, size, f)) value[strcspn(value, "\r\n")] = 0;
+    fclose(f);
+}
+
+static bool unload(void)
+{
+    const char *modules[] = {"sprd_camera", "sprd_flash_drv", "sprd_sensor"};
+    for (size_t i = 0; i < sizeof modules / sizeof *modules; i++)
+        if (syscall(SYS_delete_module, modules[i], O_NONBLOCK) < 0 && errno != ENOENT)
+            return false;
+    return true;
+}
+
+bool camera_driver_uninstall(void)
+{
+    if (!unload()) return false;
+    for (size_t i = 0; i < sizeof files / sizeof *files; i++) {
+        char path[256];
+        snprintf(path, sizeof path, DRIVER_DIR "/%s", files[i]);
+        if (unlink(path) < 0 && errno != ENOENT) return false;
+    }
+    return true;
+}
+
 static void clean_stage(void)
 {
     if (!*stage) return;
@@ -78,6 +120,10 @@ static void clean_stage(void)
 static void installed(int status)
 {
     bool success = status == 0;
+    if (success && !unload()) {
+        report("@error Camera driver is in use; close the camera and retry");
+        success = false;
+    }
     if (success) {
         unlink(DRIVER_DIR "/kernel.release");
         for (size_t i = 0; i < sizeof files / sizeof *files; i++) {

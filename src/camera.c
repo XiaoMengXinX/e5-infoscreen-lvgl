@@ -1,6 +1,7 @@
 #include "camera.h"
 #include "camera_capture.h"
 #include "camera_driver.h"
+#include "camera_driver_ui.h"
 #include "theme.h"
 #include "ui.h"
 #include "src/misc/cache/instance/lv_image_cache.h"
@@ -12,7 +13,7 @@ static struct {
     lv_obj_t *root, *image, *status, *panel, *hint, *scan_frame;
     lv_obj_t *scan_shade[4];
     lv_timer_t *timer;
-    enum { CLOSED, INSTALLING, CAPTURING, INSTALL_FAILED } phase;
+    enum { CLOSED, INSTALLING, CAPTURING } phase;
     unsigned photos, zoom;
     bool scan_mode;
     char last_qr[256];
@@ -25,7 +26,7 @@ static struct {
 static void refresh(lv_timer_t *timer)
 {
     (void)timer;
-    if (camera.phase == INSTALLING || camera.phase == INSTALL_FAILED) return;
+    if (camera.phase == INSTALLING) return;
     struct camera_status status;
     bool fresh = camera_capture_update(camera.phase == CAPTURING ? camera.pixels : NULL, &status);
     if (camera.phase == CLOSED) {
@@ -115,7 +116,9 @@ static void set_zoom(unsigned zoom)
 void camera_close(void)
 {
     if (camera.phase == CLOSED) return;
-    if (camera.phase == INSTALLING) camera_driver_cancel();
+    if (camera.phase == INSTALLING) {
+        camera_driver_ui_cancel();
+    }
     camera.phase = CLOSED;
     camera.on_code = NULL;
     camera_capture_stop();
@@ -248,22 +251,18 @@ bool camera_supported(void)
     return camera_driver_supported();
 }
 
-static void installation_progress(const char *line)
-{
-    if (!strcmp(line, "@check"))
-        ui_set_text(camera.status, L("正在检查相机驱动…", "Checking camera driver…"));
-    else if (!strcmp(line, "@download"))
-        ui_set_text(camera.status, L("正在下载相机驱动…", "Downloading camera driver…"));
-    else if (!strcmp(line, "@install"))
-        ui_set_text(camera.status, L("正在安装相机驱动…", "Installing camera driver…"));
-    else if (!strncmp(line, "@error ", 7))
-        ui_set_fmt(camera.status, "%s\n%s", L("相机驱动安装失败", "Camera driver installation failed"), line + 7);
-}
-
 static void installation_done(bool success)
 {
-    camera.phase = success ? CAPTURING : INSTALL_FAILED;
-    if (success) camera_capture_start(camera.on_code != NULL);
+    if (success) {
+        camera.phase = CAPTURING;
+        camera_capture_start(camera.scan_mode);
+    } else {
+        bool scanning = camera.on_code != NULL;
+        camera.phase = CLOSED;
+        camera.on_code = NULL;
+        lv_obj_set_hidden(camera.panel, true);
+        if (!scanning) apps_page.back();
+    }
 }
 
 static void open_camera(void (*on_code)(const char *activation))
@@ -289,8 +288,7 @@ static void open_camera(void (*on_code)(const char *activation))
         camera_capture_start(camera.scan_mode);
     } else {
         camera.phase = INSTALLING;
-        ui_set_text(camera.status, L("正在下载安装相机驱动…", "Downloading camera driver…"));
-        camera_driver_install(installation_progress, installation_done);
+        camera_driver_ui_open(installation_done);
     }
     if (!camera.timer) camera.timer = lv_timer_create(refresh, 33, NULL);
     refresh(NULL);

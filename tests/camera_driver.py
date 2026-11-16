@@ -24,7 +24,7 @@ class DriverTests(unittest.TestCase):
         self.stage = Path(temporary.name)
         self.payloads = {name: (name + ' contents').encode() for name in driver['MODULES']}
         self.config = 'CONFIG_Z=y\nCONFIG_A="hello"\n'
-        self.build = dict(profile='lym10k', kernel_release='6.12-test',
+        self.build = dict(profile='lym10k', kernel_release='6.12-test', driver_commit='a' * 40,
                           asset='sprd-camera-lym10k-6.12-test-arm64.tar.gz', sha256='0' * 64,
                           config_sha256=sha(b'CONFIG_A="hello"\nCONFIG_Z=y\n'),
                           modules={name: sha(data) for name, data in self.payloads.items()})
@@ -62,6 +62,7 @@ class DriverTests(unittest.TestCase):
         self.assertEqual(self.select(manifest), self.build)
         self.assertEqual(driver['select_build'](manifest, 't512n', '6.12-test', other['config_sha256']), other)
         for field, value in [('profile', 'LYM10K'), ('kernel_release', '6.12'),
+                             ('driver_commit', None), ('driver_commit', 'bad'),
                              ('config_sha256', '1' * 64), ('asset', '../bad.tar.gz'),
                              ('asset', 'https://other/driver.tar.gz'), ('sha256', 'oops'),
                              ('modules', {}), ('modules', dict(self.build['modules'], extra='0' * 64))]:
@@ -153,7 +154,8 @@ class DriverTests(unittest.TestCase):
         calls = self.run_install()
         self.assertEqual(calls, [(driver['MANIFEST_URL'], 'manifest.json'),
                                 (driver['MANIFEST_URL'].rsplit('/', 1)[0] + '/' + self.build['asset'], 'driver.tar.gz')])
-        self.assertEqual({p.name for p in self.stage.iterdir()}, {*self.payloads, 'kernel.release'})
+        self.assertEqual({p.name for p in self.stage.iterdir()}, {*self.payloads, 'kernel.release', 'build.commit'})
+        self.assertEqual((self.stage / 'build.commit').read_text(), self.build['driver_commit'] + '\n')
         self.assertEqual((self.stage / 'kernel.release').read_bytes(), b'6.12-test\n')
 
     def test_failed_downloads_remove_temporary_files_without_ready_marker(self):
