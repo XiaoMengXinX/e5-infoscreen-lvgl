@@ -17,7 +17,7 @@ static struct {
     lv_timer_t *timer;
     enum { CLOSED, INSTALLING, CAPTURING } phase;
     unsigned photos, zoom;
-    bool scan_mode, torch_checked, torch_available;
+    bool scan_mode, torch_checked, torch_available, torch_on;
     char last_qr[256];
     uint32_t saved_at;
     void (*on_code)(const char *activation);
@@ -84,7 +84,7 @@ static void refresh(lv_timer_t *timer)
             camera.torch_checked = true;
             camera.torch_available = torch_available();
             set_zoom(camera.zoom);
-        }
+        } else if (camera.torch_on != torch_enabled()) set_zoom(camera.zoom);
     }
 }
 
@@ -115,6 +115,7 @@ static void update_scan_region(void)
 static void set_zoom(unsigned zoom)
 {
     camera.zoom = zoom;
+    camera.torch_on = torch_enabled();
     update_scan_region();
     const char *light_hint = "";
     if (camera.torch_available)

@@ -12,7 +12,6 @@
 #include "torch.h"
 #include "ui.h"
 #include <errno.h>
-#include <stdio.h>
 #include <string.h>
 
 static lv_obj_t *list, *speed, *toolkit, *toolkit_row, *esim, *clash, *camera, *flashlight;
@@ -34,12 +33,9 @@ static void show(lv_obj_t *view)
     }
     if (view != camera)
         camera_close();
-    if (view != flashlight && !lv_obj_is_hidden(flashlight)) {
-        if (light_installing) {
-            camera_driver_ui_cancel();
-            light_installing = false;
-        }
-        if (!torch_set(false)) perror("turn off flashlight");
+    if (view != flashlight && light_installing) {
+        camera_driver_ui_cancel();
+        light_installing = false;
     }
     if (view != speed)
         speedtest_stop();
@@ -106,18 +102,18 @@ static void light_refresh(void)
     lv_obj_set_style_outline_color(light_button, color, LV_STATE_FOCUS_KEY);
 }
 
-static void light_toggle(lv_event_t *event)
+void apps_toggle_torch(void)
 {
     if (!torch_set(!torch_enabled())) {
         dialog_open(L("手电筒操作失败", "Flashlight failed"), strerror(errno));
         dialog_cancel();
     }
-    light_refresh();
+    if (!lv_obj_is_hidden(flashlight)) light_refresh();
 }
 
-static void light_deleted(lv_event_t *event)
+static void light_toggle(lv_event_t *event)
 {
-    if (!torch_set(false)) perror("turn off flashlight");
+    apps_toggle_torch();
 }
 
 static void light_layout(lv_event_t *event)
@@ -163,7 +159,6 @@ static void create(lv_obj_t *page)
     flashlight = ui_page(page);
     lv_obj_set_scrollable(flashlight, false);
     if (torch_supported()) {
-        lv_obj_add_event_cb(flashlight, light_deleted, LV_EVENT_DELETE, NULL);
         lv_obj_set_flex_align(flashlight, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
         lv_obj_set_style_pad_row(flashlight, S(12), 0);
         lv_obj_t *title = ui_text(flashlight, 22, true, theme.text);
@@ -183,7 +178,7 @@ static void create(lv_obj_t *page)
         lv_obj_add_event_cb(area, light_layout, LV_EVENT_SIZE_CHANGED, NULL);
         light_status = ui_text(flashlight, 18, true, theme.dim);
         lv_obj_t *hint = ui_text(flashlight, 12, false, theme.dim);
-        ui_set_text(hint, L("轻触或按OK键开关\n返回时关闭", "Tap or press OK to toggle\nBack turns it off"));
+        ui_set_text(hint, L("轻触或按OK键开关\n长按侧键开关手电筒", "Tap or press OK to toggle\nHold side key to toggle"));
         lv_obj_set_width(hint, LV_PCT(100));
         lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
         light_refresh();

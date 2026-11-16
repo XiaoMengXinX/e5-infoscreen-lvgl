@@ -12,6 +12,7 @@
 #include "input.h"
 #include "keyboard.h"
 #include "theme.h"
+#include "torch.h"
 #include "ui.h"
 #include "util.h"
 #include "wallpaper.h"
@@ -37,7 +38,7 @@ static const int nav_defaults[5] = {PAGE_OVERVIEW, PAGE_SIGNAL, PAGE_TRAFFIC, PA
 
 static struct {
     lv_obj_t *root, *bar_wallpaper, *content, *menu;
-    lv_obj_t *bar, *bar_sim, *bar_op, *bar_tech, *bar_notes, *bar_sms, *bar_bars, *bar_dual[2], *bar_bat, *bar_pct, *bar_clock, *bar_rec;
+    lv_obj_t *bar, *bar_sim, *bar_op, *bar_tech, *bar_notes, *bar_sms, *bar_torch, *bar_bars, *bar_dual[2], *bar_bat, *bar_pct, *bar_clock, *bar_rec;
     lv_obj_t *toolbar, *back_icon, *title, *spinner;
     lv_obj_t *nav, *nav_pill, *nav_buttons[5];
     lv_obj_t *pages[PAGE_COUNT], *errors[PAGE_COUNT];
@@ -76,7 +77,7 @@ static struct {
 static struct {
     lv_timer_t *timer;
     bool fired;
-} power_key;
+} power_key, hotspot_key;
 static uint32_t last_back;
 static uint32_t last_step, last_focus;
 static bool volume_busy;
@@ -1263,6 +1264,13 @@ static void power_hold(lv_timer_t *t)
     power_menu_open();
 }
 
+static void hotspot_hold(lv_timer_t *timer)
+{
+    lv_timer_pause(timer);
+    hotspot_key.fired = true;
+    apps_toggle_torch();
+}
+
 struct focus_scan {
     lv_group_t *group;
     lv_obj_t *current, *best;
@@ -1342,6 +1350,7 @@ static bool field_focused(void)
 
 void shell_key(const struct key_event *key)
 {
+    struct key_event short_press;
     if (volkeys_cut_active() && key->kind != KEY_KIND_VOLUP && key->kind != KEY_KIND_VOLDOWN)
         return;
     lock_key_held(key);
@@ -1399,6 +1408,21 @@ void shell_key(const struct key_event *key)
                 screen_set_blank(!app.blank);
         }
         return;
+    }
+    if (key->kind == KEY_KIND_HOTSPOT && hotspot_key.timer) {
+        if (key->down) {
+            if (!key->repeat) {
+                hotspot_key.fired = false;
+                lv_timer_reset(hotspot_key.timer);
+                lv_timer_resume(hotspot_key.timer);
+            }
+            return;
+        }
+        lv_timer_pause(hotspot_key.timer);
+        if (hotspot_key.fired) return;
+        short_press = *key;
+        short_press.down = true;
+        key = &short_press;
     }
     if (!key->down)
         return;
@@ -1781,6 +1805,11 @@ static lv_obj_t *tool_button(lv_obj_t *parent, const char *icon, int width, lv_e
     return b;
 }
 
+static void torch_changed(bool enabled)
+{
+    lv_obj_set_hidden(ui.bar_torch, !enabled);
+}
+
 static void build_bar(void)
 {
     ui.bar = lv_obj_create(ui.root);
@@ -1811,6 +1840,9 @@ static void build_bar(void)
     ui.bar_notes = ui_text(ui.bar, 10, false, theme.accent);
     ui.bar_sms = icon_create(ui.bar, "sms", 13);
     lv_obj_set_style_text_color(ui.bar_sms, theme.accent, 0);
+    ui.bar_torch = icon_create(ui.bar, "flashlight", 13);
+    lv_obj_set_style_text_color(ui.bar_torch, theme.fair, 0);
+    torch_changed(torch_enabled());
     ui.bar_bars = bars_create(ui.bar, 15, 11);
     lv_obj_t *dual = lv_obj_create(ui.bar);
     lv_obj_remove_style_all(dual);
@@ -2069,6 +2101,7 @@ static void build(void)
     shell_wallpaper_locked(lock_active());
     phone_init();
     shell_title();
+    torch_on_change(torch_changed);
 }
 
 void shell_wallpaper_locked(bool locked)
@@ -2115,6 +2148,7 @@ void shell_bar_lock_place(int32_t y, lv_opa_t opa)
 
 void shell_rebuild(void)
 {
+    torch_on_change(NULL);
     keyboard_close();
     power_menu_close();
     dialog_close();
@@ -2151,6 +2185,10 @@ void shell_init(void)
     lv_timer_pause(chord_timer);
     power_key.timer = lv_timer_create(power_hold, 1200, NULL);
     lv_timer_pause(power_key.timer);
+    if (torch_supported()) {
+        hotspot_key.timer = lv_timer_create(hotspot_hold, 1200, NULL);
+        lv_timer_pause(hotspot_key.timer);
+    }
     build();
     lv_display_add_event_cb(lv_display_get_default(), motion_frame, LV_EVENT_REFR_START, NULL);
     lv_display_add_event_cb(lv_display_get_default(), motion_frame, LV_EVENT_REFR_READY, NULL);

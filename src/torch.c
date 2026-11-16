@@ -8,6 +8,12 @@
 
 #define TORCH_BRIGHTNESS "/sys/class/leds/aw3641:white:torch/brightness"
 static int torch_fd = -1;
+static void (*on_change)(bool enabled);
+
+void torch_on_change(void (*changed)(bool enabled))
+{
+    on_change = changed;
+}
 
 bool torch_supported(void)
 {
@@ -38,6 +44,7 @@ bool torch_set(bool enabled)
         /* Releasing the flash device switches the light off, including on process exit. */
         int result = close(torch_fd);
         torch_fd = -1;
+        if (on_change) on_change(false);
         return result == 0;
     }
     if (!torch_supported()) { errno = ENODEV; return false; }
@@ -57,8 +64,10 @@ bool torch_set(bool enabled)
         written = fprintf(f, "1\n") > 0;
         if (fclose(f)) written = false;
     }
-    if (written) torch_fd = fd;
-    else {
+    if (written) {
+        torch_fd = fd;
+        if (on_change) on_change(true);
+    } else {
         int error = errno;
         close(fd);
         errno = error;
