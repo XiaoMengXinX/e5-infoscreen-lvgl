@@ -34,6 +34,7 @@ enum sensor_model { SENSOR_GC05A2, SENSOR_GC5035, SENSOR_SP5508 };
 #define BYTES (WIDTH * HEIGHT * 2)
 #define BUFFERS 3
 #define PHOTO "/tmp/camera.jpg"
+#define QR_INTERVAL_MS 200
 static struct {
     pthread_mutex_t lock;
     pthread_t thread;
@@ -228,8 +229,8 @@ static void scan_frame(struct quirc *decoder, const uint16_t *raw, unsigned zoom
     int y0 = (HEIGHT - side) / 2;
     /* Decode only the centered viewfinder square; 2x2 green sampling avoids Bayer color artifacts. */
     for (int y = 0; y < h; y++) for (int x = 0; x < w; x++) {
-        int sx = x0 + x * side / w;
-        int sy = y0 + y * side / h;
+        int sx = (x0 + x * side / w) & ~1;
+        int sy = (y0 + y * side / h) & ~1;
         unsigned value = (raw[sy * WIDTH + sx] + raw[(sy + 1) * WIDTH + sx + 1]) / 2;
         gray[y * w + x] = value > 1023 ? 255 : value / 4;
     }
@@ -408,6 +409,7 @@ static void *session(void *unused)
     }
     unsigned frames = 0, exposure = model == SENSOR_SP5508 ? 1590 : 1842,
              gain = model == SENSOR_SP5508 ? 16320 : 1024;
+    struct timespec last_scan = {0};
     while (!stopping()) {
         struct sprd_img_read_op event = {.cmd = SPRD_IMG_GET_IMG_BUFFER};
         ssize_t n = read(image, &event, sizeof event);
@@ -435,8 +437,16 @@ static void *session(void *unused)
             if (frames % 6 == 0 && auto_exposure(sensor, raw, zoom, &exposure, &gain, model)) {
                 failure("set exposure"); frame_failed = true; goto release_frame;
             }
-            if (decoder && frames % 12 == 0)
-                scan_frame(decoder, raw, zoom, sensor_x_fraction, sensor_y_fraction);
+            if (decoder) {
+                struct timespec now;
+                clock_gettime(CLOCK_MONOTONIC, &now);
+                int64_t elapsed_ms = (int64_t)(now.tv_sec - last_scan.tv_sec) * 1000 +
+                                     (now.tv_nsec - last_scan.tv_nsec) / 1000000;
+                if (elapsed_ms >= QR_INTERVAL_MS) {
+                    scan_frame(decoder, raw, zoom, sensor_x_fraction, sensor_y_fraction);
+                    clock_gettime(CLOCK_MONOTONIC, &last_scan);
+                }
+            }
             if (frames == 3 || frames % 12 == 0) white_balance(raw, zoom, &color);
             int crop_width = WIDTH * 100 / (int)zoom;
             int crop_height = HEIGHT * 100 / (int)zoom;
