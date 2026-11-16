@@ -1312,8 +1312,11 @@ static void focus_move(int dir)
         scan.dir = 1;
     focus_scan(page, &scan);
     if (!scan.best) {
-        if (dir > 0 ? lv_obj_get_scroll_bottom(page) > 0 : lv_obj_get_scroll_top(page) > 0) {
-            lv_obj_scroll_by_bounded(page, 0, -dir * S(80), LV_ANIM_ON);
+        lv_obj_t *scroll = scan.current ? lv_obj_get_parent(scan.current) : page;
+        while (scroll != page && !lv_obj_is_scrollable(scroll))
+            scroll = lv_obj_get_parent(scroll);
+        if (dir > 0 ? lv_obj_get_scroll_bottom(scroll) > 0 : lv_obj_get_scroll_top(scroll) > 0) {
+            lv_obj_scroll_by_bounded(scroll, 0, -dir * S(80), LV_ANIM_ON);
             return;
         }
         if (!scan.current)

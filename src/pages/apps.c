@@ -60,11 +60,6 @@ static void show(lv_obj_t *view)
         ui_focus_key(list_focus);
         list_focus = NULL;
     }
-    if (view == list) {
-        lv_obj_t *page = lv_obj_get_parent(list);
-        lv_obj_update_layout(page);
-        lv_obj_scroll_to_y(page, 0, LV_ANIM_OFF);
-    }
 }
 
 static void on_speedtest(lv_event_t *e)
@@ -125,6 +120,14 @@ static void light_deleted(lv_event_t *event)
     if (!torch_set(false)) perror("turn off flashlight");
 }
 
+static void light_layout(lv_event_t *event)
+{
+    lv_obj_t *area = lv_event_get_target_obj(event);
+    int32_t size = LV_MIN(S(148), LV_MIN(lv_obj_get_content_width(area), lv_obj_get_content_height(area)));
+    lv_obj_set_size(light_button, size, size);
+    lv_obj_set_size(light_icon, size * 64 / 148, size * 64 / 148);
+}
+
 static void light_installed(bool success)
 {
     light_installing = false;
@@ -145,7 +148,11 @@ static void on_flashlight(lv_event_t *event)
 static void create(lv_obj_t *page)
 {
     list_focus = NULL;
-    list = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
+    lv_obj_set_scrollable(page, false);
+    lv_obj_set_style_pad_all(page, 0, 0);
+    lv_obj_set_style_pad_gap(page, 0, 0);
+    list = ui_page(page);
+    lv_obj_set_style_pad_gap(list, S(ui_stack_gap()), 0);
     ui_row(list, "phone", L("电话", "Phone"), NULL, ROW_CHEVRON, on_phone, NULL);
     ui_row(list, "traffic", L("网速测试", "Speed test"), NULL, ROW_CHEVRON, on_speedtest, NULL);
     toolkit_row = ui_row(list, "simcard", L("SIM 卡应用", "SIM toolkit"), NULL, ROW_CHEVRON, on_toolkit, NULL);
@@ -153,22 +160,27 @@ static void create(lv_obj_t *page)
     ui_row(list, "globe", L("Mihomo 面板", "Mihomo panel"), NULL, ROW_CHEVRON, on_clash, NULL);
     if (camera_supported()) ui_row(list, "camera", L("相机", "Camera"), NULL, ROW_CHEVRON, on_camera, NULL);
     if (torch_supported()) ui_row(list, "flashlight", L("手电筒", "Flashlight"), NULL, ROW_CHEVRON, on_flashlight, NULL);
-    flashlight = ui_box(page, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
+    flashlight = ui_page(page);
+    lv_obj_set_scrollable(flashlight, false);
     if (torch_supported()) {
         lv_obj_add_event_cb(flashlight, light_deleted, LV_EVENT_DELETE, NULL);
-        lv_obj_set_height(flashlight, LV_PCT(100));
         lv_obj_set_flex_align(flashlight, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_row(flashlight, S(22), 0);
+        lv_obj_set_style_pad_row(flashlight, S(12), 0);
         lv_obj_t *title = ui_text(flashlight, 22, true, theme.text);
         ui_set_text(title, L("手电筒", "Flashlight"));
-        light_button = ui_button(flashlight, "", light_toggle, NULL);
+        lv_obj_t *area = ui_box(flashlight, LV_FLEX_FLOW_COLUMN, 0);
+        lv_obj_set_flex_grow(area, 1);
+        lv_obj_set_layout(area, LV_LAYOUT_NONE);
+        light_button = ui_button(area, "", light_toggle, NULL);
         lv_obj_set_size(light_button, S(148), S(148));
+        lv_obj_center(light_button);
         lv_obj_set_style_radius(light_button, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_border_width(light_button, 1, 0);
         lv_obj_set_layout(light_button, LV_LAYOUT_NONE);
         lv_obj_set_hidden(lv_obj_get_child(light_button, 0), true);
         light_icon = icon_create(light_button, "flashlight", S(64));
         lv_obj_center(light_icon);
+        lv_obj_add_event_cb(area, light_layout, LV_EVENT_SIZE_CHANGED, NULL);
         light_status = ui_text(flashlight, 18, true, theme.dim);
         lv_obj_t *hint = ui_text(flashlight, 12, false, theme.dim);
         ui_set_text(hint, L("轻触或按OK键开关\n返回时关闭", "Tap or press OK to toggle\nBack turns it off"));
@@ -178,20 +190,21 @@ static void create(lv_obj_t *page)
     }
     lv_obj_set_hidden(flashlight, true);
     camera = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
+    lv_obj_set_height(camera, LV_PCT(100));
     if (camera_supported()) camera_create(camera);
     lv_obj_set_hidden(camera, true);
-    speed = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
+    speed = ui_page(page);
     /* The dial is sized for the panel; larger display sizes would push it off. */
     float scale = theme_cap(1);
     speedtest_create(speed);
     theme.scale = scale;
-    toolkit = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
+    toolkit = ui_page(page);
     stk_create(toolkit);
     lv_obj_set_hidden(toolkit, true);
-    esim = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
+    esim = ui_page(page);
     esim_create(esim);
     lv_obj_set_hidden(esim, true);
-    clash = ui_box(page, LV_FLEX_FLOW_COLUMN, 0);
+    clash = ui_page(page);
     clash_create(clash);
     lv_obj_set_hidden(clash, true);
     lv_obj_set_hidden(toolkit_row, !stk_enabled());
