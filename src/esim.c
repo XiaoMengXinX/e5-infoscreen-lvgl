@@ -7,6 +7,7 @@
 #include <strings.h>
 
 #include "app.h"
+#include "camera.h"
 #include "input.h"
 #include "install.h"
 #include "keyboard.h"
@@ -459,9 +460,27 @@ static void on_confirmation(lv_event_t *e)
     edit_text(&state.confirmation, e);
 }
 
+static void scanned_activation(const char *activation)
+{
+    char *value = strdup(activation);
+    if (!value) { toast("%s", L("内存不足", "Out of memory")); return; }
+    free(state.activation);
+    state.activation = value;
+    render();
+    toast("%s", L("已识别激活码，请确认后下载", "Activation code scanned. Review before downloading."));
+}
+
+static void on_scan(lv_event_t *event)
+{
+    keyboard_close();
+    input_defocus();
+    camera_scan(scanned_activation);
+}
+
 static void download(void)
 {
     ui_heading(ui.body, L("添加配置文件", "Add profile"));
+    if (camera_supported()) ui_row(ui.body, "camera", L("扫码输入激活码", "Scan activation code"), NULL, ROW_CHEVRON, on_scan, NULL);
     lv_obj_t *box = ui_box(ui.body, LV_FLEX_FLOW_COLUMN, 4);
     lv_label_set_text(ui_text(box, 12, false, theme.dim), L("激活码", "Activation code"));
     lv_obj_t *activation = textarea(box, 0, state.activation ? state.activation : "");
@@ -1345,6 +1364,7 @@ void esim_close(void)
 {
     if (!open_now)
         return;
+    if (camera_scanning()) camera_close();
     open_now = false;
     restore_se_focus = false;
     keyboard_close();
@@ -1357,6 +1377,7 @@ void esim_close(void)
 
 bool esim_back(void)
 {
+    if (camera_scanning()) { camera_close(); return true; }
     switch (state.view) {
     case V_LOADING:
     case V_ROOT:
@@ -1385,6 +1406,8 @@ bool esim_back(void)
  * Up from the first entry walks onto it. */
 bool esim_key(const struct key_event *key)
 {
+    if (camera_scanning())
+        return camera_key(key);
     lv_obj_t *focused = input_key_focus(input_group());
     if (state.view == V_INTERFACE && focused &&
         (focused == ui.interfaces[0] || focused == ui.interfaces[1]) &&

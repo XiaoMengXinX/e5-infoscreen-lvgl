@@ -12,12 +12,19 @@ if not (ROOT / 'out/build/liblvgl.a').is_file():
     raise SystemExit('Run python3 build.py first')
 subprocess.run([sys.executable, str(ROOT / 'tests/modem_restart.py')], check=True)
 subprocess.run([sys.executable, str(ROOT / 'tests/lpac_bridge.py')], check=True)
+subprocess.run([sys.executable, str(ROOT / 'tests/camera_driver.py')], check=True)
 lvgl = '/out/deps/' + build['SOURCES']['lvgl'][3]
 cjson = '/out/deps/' + build['SOURCES']['cjson'][3]
 flags = ['cc', '-O2', '-std=gnu11', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
          '-DLV_CONF_INCLUDE_SIMPLE', '-I/out/gen', '-I/src', '-I/src/src', '-I' + lvgl, '-I' + cjson,
          '-I/usr/include/libdrm', '-ffunction-sections', '-fdata-sections']
 commands = ['mkdir -p /out/tests']
+qr = flags + ['-I/src/third_party/quirc', '/src/tests/camera_qr.c', '/src/src/camera_qr.c',
+              '/out/build/libquirc.a', '-static', '-lm', '-o', '/out/tests/camera_qr']
+commands.append(shlex.join(qr))
+for fixture, result in [('esim-qr', 'LPA:1$test.example$camera-scan-test'), ('other-qr', 'other'),
+                        ('invalid-esim-qr', 'other'), ('blank-qr', 'none')]:
+    commands.append(shlex.join(['/out/tests/camera_qr', '/src/tests/fixtures/' + fixture + '.pgm', result]))
 for name, sources in [('volkeys', ['/src/tests/volkeys.c']), ('drm', ['/src/tests/drm.c']), ('motion', ['/src/tests/motion.c', '/src/src/ui.c']),
                       ('lpac', ['/src/tests/lpac.c']), ('esim_text', ['/src/tests/esim_text.c']),
                       ('esim_flow', ['/src/tests/esim_flow.c', '/src/src/ui.c', '/src/src/dialog.c']),

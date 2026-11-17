@@ -17,3 +17,7 @@ The baseband restart test checks the kernel CP stop/start sequence, lock exclusi
 Backend selection coverage checks installed driver capabilities, disabled choices, saved selection, forced stdio routing, and interface-key focus.
 
 The volume-key test covers the original plugin configuration, defaults, cached reads and external edits, call priority, hold behavior, and minimum-brightness cut/wake behavior.
+
+QR fixtures cover a valid eSIM activation payload, an ordinary URL, a missing matching ID, an undersized destination, and a blank frame. The eSIM flow test checks scan cancellation, activation-code fill without starting a download, confirmation-code preservation, and closing the scanner when leaving the app.
+
+`python3 tests/camera_driver.py` checks release selection by device, kernel and config, archive and module checksums, regular-file archive contents, download tool selection and failed staging cleanup. The eSIM flow test also checks that unsupported devices hide the scan entry.

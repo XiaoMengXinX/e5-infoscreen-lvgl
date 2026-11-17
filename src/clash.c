@@ -595,7 +595,7 @@ static void on_confirm_reset(lv_event_t *e)
 void clash_create(lv_obj_t *parent)
 {
     memset(&ui, 0, sizeof ui);
-    ui.page = lv_obj_get_parent(parent);
+    ui.page = parent;
     lv_obj_t *root = ui.main = ui_box(parent, LV_FLEX_FLOW_COLUMN, ui_stack_gap());
     ui.notice = ui_note(root, "");
     lv_obj_set_hidden(ui.notice, true);

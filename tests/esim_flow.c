@@ -10,7 +10,13 @@ struct app app = {.en = true};
 struct theme theme = {.scale = 1, .surface_opa = LV_OPA_COVER};
 static lv_group_t *group;
 static int stops, cancels;
-static bool accepted;
+static bool accepted, scanning, supported = true;
+static void (*scan_callback)(const char *);
+bool camera_supported(void) { return supported; }
+void camera_scan(void (*callback)(const char *)) { scanning = true; scan_callback = callback; }
+bool camera_scanning(void) { return scanning; }
+void camera_close(void) { scanning = false; }
+bool camera_key(const struct key_event *key) { return key->kind != KEY_KIND_BACK; }
 static char command[128];
 static char installation[512];
 static char interface_option[16], backend_option[16], configured_backend[16];
@@ -116,6 +122,36 @@ int main(void)
     assert(state.view == V_ROOT && !reload_timer);
 
     state.view = V_DOWNLOAD;
+    supported = false;
+    render();
+    assert(!has_text(ui.body, "Scan activation code"));
+    supported = true;
+    render();
+    assert(has_text(ui.body, "Scan activation code"));
+    state.activation = strdup("LPA:1$original.example$keep");
+    state.confirmation = strdup("1234");
+    char command_before_scan[sizeof command];
+    memcpy(command_before_scan, command, sizeof command);
+    on_scan(NULL);
+    assert(scanning && scan_callback && state.view == V_DOWNLOAD);
+    assert(esim_key(&(struct key_event){.kind = KEY_KIND_OK}));
+    assert(!esim_key(&(struct key_event){.kind = KEY_KIND_BACK}));
+    assert(esim_back() && !scanning && state.view == V_DOWNLOAD);
+    assert(!strcmp(state.activation, "LPA:1$original.example$keep"));
+    on_scan(NULL);
+    camera_close();
+    scan_callback("LPA:1$test.example$camera-scan-test");
+    assert(!scanning && !state.downloading && state.view == V_DOWNLOAD);
+    assert(!strcmp(state.activation, "LPA:1$test.example$camera-scan-test"));
+    assert(!strcmp(state.confirmation, "1234"));
+    assert(!strcmp(command_before_scan, command));
+    assert(has_text(ui.body, "LPA:1$test.example$camera-scan-test"));
+    on_scan(NULL);
+    esim_close();
+    assert(!scanning);
+    open_now = true;
+    free(state.activation); state.activation = NULL;
+    free(state.confirmation); state.confirmation = NULL;
     state.action = A_DOWNLOAD;
     state.downloading = true;
     download_dialog();

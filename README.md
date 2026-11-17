@@ -28,6 +28,9 @@
 | `src/modem_restart.c` `src/modem_restart.py` | 信息屏内的基带重启流程：暂停控制通道、重置 CP、恢复 SIM 射频、网络设置和数据连接 |
 | `src/battery.c` | 电池详情：使用时长、预估续航、电量历史 |
 | `src/clash.c` `src/clash_find.c` | Mihomo 面板：经 Clash API 显示流量、核心状态和订阅，切换代理模式；从运行中的核心识别连接设置 |
+| `src/camera.c` `src/camera_capture.c` `src/camera_qr.c` | 相机与eSIM扫码：取景、拍照、二维码识别及vendor采集接口 |
+| `src/camera_driver.c` `src/camera_driver.py` `src/camera_driver_ui.c` | 相机驱动：机型识别、按运行内核下载安装和卸载模块、按需加载 |
+| `src/torch.c` | E5补光灯控制与灯光状态通知 |
 | `src/record.c` | 录屏：JPEG 编码的 QuickTime 视频 |
 | `src/pages/` | 概览、信号、流量、短信、热点、设备、详细信息、设置、应用 |
 | `src/font.c` | FreeType 字体，按需光栅化并缓存字形；从 `.ttc` 中选取 SC 字面 |
@@ -171,7 +174,27 @@ Clash 核心按命令行的 `-d`、`-f` 找到配置，读取顶层的 `external
 
 ## 范围
 
-应用页提供电话及其设置（来电铃声、震动、亮屏）、网速测试、SIM 卡应用、eSIM 管理和 Mihomo 面板。第三方网页插件和应用商店尚未接入。
+应用页提供电话及其设置（来电铃声、震动、亮屏）、网速测试、SIM卡应用、eSIM管理和Mihomo面板；支持的机型还提供相机和手电筒。应用列表与各应用分别保存滚动位置。第三方网页插件和应用商店尚未接入。
+
+## 相机
+
+应用 → 相机在lym10k和t512n上使用GC05A2，在E5上先识别SP5508，再尝试GC5035候选。按OK键，将1944×2592的JPEG照片保存到`/tmp/camera.jpg`，再次拍照覆盖上一张。预览和照片统一向右旋转90度，取景画面在可用区域内保持3:4比例完整显示，画面底部显示「按OK键拍照」；GC05A2和SP5508的曝光与sensor增益根据RAW亮度自动调整，GC5035沿用模式表中的固定曝光。保存成功提示显示2秒后自动隐藏。返回时界面立即关闭取景，后台停止采集、释放buffer并卸载由应用加载的模块；清理期间再次打开会等旧会话完成后启动。
+
+相机和eSIM扫码入口仅在`/etc/e5/device-profile`为`e5`、`lym10k`或`t512n`时显示。首次打开时，如果本机没有匹配运行内核的模块，应用会提示安装；确认后从[e5-linux-camera的modules Release](https://github.com/XiaoMengXinX/e5-linux-camera/releases/tag/modules)下载安装`sprd_sensor.ko`、`sprd_flash_drv.ko`和`sprd_camera.ko`。安装会核对设备、内核版本、内核配置以及包和模块的SHA256；没有匹配构建时显示具体错误，返回键可取消下载。设置 → 系统 → 相机可查看驱动状态和构建哈希，并安装、重新安装或卸载驱动。
+
+模块安装在`/usr/libexec/e5-infoscreen/camera/`，`kernel.release`记录对应的内核版本。下载安装在后台执行，完成后直接进入取景；模块按相机会话加载、卸载。构建Release只提供外部模块，设备继续运行现有内核。
+
+`src/camera_capture.c`在线程中处理sensor、CSI、DMA-BUF和JPEG编码；`src/camera.c`负责LVGL页面。`src/camera_vendor/`保留采集ABI、GC05A2、GC5035和SP5508初始化表，内核模块独立构建。RAW转换使用GRBG Bayer双线性去马赛克、黑电平扣除、自动白平衡和sRGB传递曲线，预览与JPEG共用颜色参数。白平衡通过未过曝的中间亮度采样平滑调整红蓝通道。当前尚未接入sensor专属颜色校准矩阵和ISP降噪。E5的SP5508已验证ID识别、实时预览和JPEG保存，使用7-bit I2C地址`0x3c`、8-bit寄存器和两条936Mbps MIPI lane。GC5035候选仍需实机验证。
+
+在eSIM管理的「添加配置文件」页面选择「扫码输入激活码」，将相机对准eSIM二维码。识别到有效的`LPA:1$…`激活码后关闭取景并填入当前SIM的激活码框，保留确认码，下载由用户确认后触发。返回键取消扫码并保留原表单内容。二维码通过静态链接的quirc库在采集线程中识别。
+
+## 手电筒
+
+手电筒仅在E5上显示，与相机共用AW3641常亮补光驱动；缺少驱动时提示安装。卸载或重新安装驱动时会先关闭手电筒。应用页面固定在顶栏和底栏之间，按可用高度调整按钮大小。
+
+轻触圆形按钮或按OK键开关手电筒，也可长按侧键1.2秒切换。该侧键短按打开热点页面，长按松手后保持当前页面。亮灯时，状态栏显示黄色手电筒图标。
+
+退出手电筒应用或切换页面后保持亮灯，可再次进入应用或长按侧键关闭。界面程序退出时驱动关闭灯光。相机取景中的`*`键也可开关补光，退出取景或切换拍照、扫码模式时关闭补光。
 
 ## 许可
 

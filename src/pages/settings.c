@@ -1,6 +1,7 @@
 /* Settings are described by /api/settings; this page renders that model as a
  * stack of views: menu → category → editor, plus the dedicated views below. */
 #include <dirent.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,6 +10,8 @@
 #include "api.h"
 #include "app.h"
 #include "build_version.h"
+#include "camera_driver.h"
+#include "camera_driver_ui.h"
 #include "keyboard.h"
 #include "modem_restart.h"
 #include "stk.h"
@@ -93,6 +96,8 @@ static const struct {
     {"usb_net_scope", "clock"}, {"usb_net_auto", "check"}, {"usb_lan_auto", "device"}, {"name", "info"},
     {"maintainer", "user"}, {"copyright", "shield"}, {"license", "shield"}, {"control_slot", "simcard"},
     {"screen_maintainer", "user"},
+    {"local:camera", "camera"}, {"camera_driver", "camera"}, {"camera_project", "info"},
+    {"camera_commit", "chip"}, {"camera_install", "download"}, {"camera_uninstall", "trash"},
 };
 
 static const char *const page_icons[] = {"home", "signal", "traffic", "sms", "wifi", "device", "info", "settings", "apps"};
@@ -404,7 +409,36 @@ static bool roaming_allowed(int slot)
 
 static void add_local_items(cJSON *items, const char *cat)
 {
-    if (!strcmp(cat, "volkeys")) {
+    if (!strcmp(cat, "local:camera")) {
+        bool supported = camera_driver_supported();
+        bool ready = camera_driver_ready();
+        cJSON *project = local_item("camera_project", "info", "驱动项目", "Driver project", "", "");
+        cJSON_AddStringToObject(project, "value", "e5-linux-camera");
+        cJSON_AddItemToArray(items, project);
+        char commit[8];
+        camera_driver_commit(commit, sizeof commit);
+        cJSON *status = local_item("camera_driver", "info", "驱动状态", "Driver status", "", "");
+        const char *state = !supported ? L("不支持的设备", "Unsupported device")
+                           : !ready ? L("驱动未安装", "Driver not installed")
+                                    : L("已安装", "Installed");
+        cJSON_AddStringToObject(status, "value", state);
+        cJSON_AddItemToArray(items, status);
+        if (supported && ready) {
+            cJSON *build = local_item("camera_commit", "info", "构建哈希", "Build commit", "", "");
+            cJSON_AddStringToObject(build, "value", *commit ? commit : L("构建信息未记录", "Build information not recorded"));
+            cJSON_AddItemToArray(items, build);
+        }
+        if (supported) {
+            cJSON *install = local_item("camera_install", "action", ready ? "重新安装最新驱动" : "安装最新驱动",
+                                       ready ? "Reinstall latest driver" : "Install latest driver", "", "");
+            cJSON_AddItemToArray(items, install);
+            if (camera_driver_present()) {
+                cJSON *remove = local_item("camera_uninstall", "action", "卸载驱动", "Uninstall driver", "", "");
+                cJSON_AddBoolToObject(remove, "confirm", true);
+                cJSON_AddItemToArray(items, remove);
+            }
+        }
+    } else if (!strcmp(cat, "volkeys")) {
         volkeys_refresh();
         const struct volkeys_config *config = volkeys_config();
         cJSON *mode = local_item("volkeys_mode", "choice", "音量键功能", "Volume key action",
@@ -493,6 +527,8 @@ static void add_local_items(cJSON *items, const char *cat)
         cJSON_AddBoolToObject(cache, "confirm", true);
         cJSON_AddItemToArray(items, cache);
     } else if (!strcmp(cat, "system")) {
+        cJSON *camera = local_item("local:camera", "category", "相机", "Camera", "", "");
+        cJSON_InsertItemInArray(items, item_index(items, "reboot"), camera);
         cJSON *restart = local_item("ui_restart", "action", "重启界面", "Restart the screen",
                                     "只重启信息屏界面，网络不受影响", "The screen only; the network stays up");
         cJSON_AddBoolToObject(restart, "confirm", true);
@@ -560,9 +596,30 @@ static bool touch_rebind(void)
     return ok;
 }
 
+static void camera_driver_changed(bool success)
+{
+    struct view *v = top();
+    if (v && !strcmp(v->cat, "local:camera")) {
+        load_cat(v);
+        render();
+    }
+}
+
 static void local_save(const cJSON *it, const cJSON *value)
 {
     const char *id = jstr(it, "id");
+    if (!strcmp(id, "camera_install")) {
+        camera_driver_ui_open(camera_driver_changed);
+        return;
+    }
+    if (!strcmp(id, "camera_uninstall")) {
+        if (camera_driver_uninstall())
+            toast("%s", L("驱动已卸载", "Driver uninstalled"));
+        else
+            toast(L("卸载失败：%s", "Uninstall failed: %s"), strerror(errno));
+        camera_driver_changed(false);
+        return;
+    }
     if (!strncmp(id, "volkeys_", 8)) {
         char text[32];
         if (cJSON_IsBool(value))
@@ -697,7 +754,7 @@ static void load(struct view *v, const char *path)
 
 static void load_cat(struct view *v)
 {
-    if (!strcmp(v->cat, STK_CATEGORY) || !strcmp(v->cat, "volkeys")) {
+    if (!strcmp(v->cat, STK_CATEGORY) || !strcmp(v->cat, "volkeys") || !strcmp(v->cat, "local:camera")) {
         cJSON_Delete(v->data);
         v->data = cJSON_CreateArray();
         add_local_items(v->data, v->cat);
@@ -1708,7 +1765,7 @@ static void item_clicked(struct view *v, const char *id, const char *key)
         return;
     }
     if (!strcmp(type, "category")) {
-        const cJSON *c = !strcmp(id, "volkeys") ? it : category(jstr_or(it, "category", ""));
+        const cJSON *c = (!strcmp(id, "volkeys") || !strcmp(id, "local:camera")) ? it : category(jstr_or(it, "category", ""));
         if (c)
             open_category(c);
     } else if (!strcmp(type, "toggle")) {
