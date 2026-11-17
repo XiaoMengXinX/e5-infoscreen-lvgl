@@ -472,7 +472,6 @@ static void scanned_activation(const char *activation)
 
 static void on_scan(lv_event_t *event)
 {
-    (void)event;
     keyboard_close();
     input_defocus();
     camera_scan(scanned_activation);
@@ -1407,10 +1406,8 @@ bool esim_back(void)
  * Up from the first entry walks onto it. */
 bool esim_key(const struct key_event *key)
 {
-    if (camera_scanning()) {
-        if (key->kind == KEY_KIND_BACK) return false;
+    if (camera_scanning())
         return camera_key(key);
-    }
     lv_obj_t *focused = input_key_focus(input_group());
     if (state.view == V_INTERFACE && focused &&
         (focused == ui.interfaces[0] || focused == ui.interfaces[1]) &&

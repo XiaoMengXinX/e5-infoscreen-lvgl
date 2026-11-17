@@ -28,7 +28,6 @@ static void set_zoom(unsigned zoom);
 
 static void refresh(lv_timer_t *timer)
 {
-    (void)timer;
     if (camera.phase == INSTALLING) return;
     struct camera_status status;
     bool fresh = camera_capture_update(camera.phase == CAPTURING ? camera.pixels : NULL, &status);
@@ -88,13 +87,16 @@ static void refresh(lv_timer_t *timer)
     }
 }
 
+/* The preview's scale, in 1/256ths, to fit the panel whole. */
+static uint32_t preview_fit(void)
+{
+    return LV_MIN(lv_obj_get_content_width(camera.panel) * 256 / CAMERA_PREVIEW_WIDTH,
+                  lv_obj_get_content_height(camera.panel) * 256 / CAMERA_PREVIEW_HEIGHT);
+}
+
 static void fit_preview(void)
 {
-    int32_t width = lv_obj_get_content_width(camera.panel);
-    int32_t height = lv_obj_get_content_height(camera.panel);
-    uint32_t fit = LV_MIN(width * 256 / CAMERA_PREVIEW_WIDTH,
-                          height * 256 / CAMERA_PREVIEW_HEIGHT);
-    lv_image_set_scale(camera.image, fit);
+    lv_image_set_scale(camera.image, preview_fit());
     lv_obj_invalidate(camera.image);
 }
 
@@ -102,8 +104,7 @@ static void update_scan_region(void)
 {
     int32_t panel_width = lv_obj_get_content_width(camera.panel);
     int32_t panel_height = lv_obj_get_content_height(camera.panel);
-    uint32_t fit = LV_MIN(panel_width * 256 / CAMERA_PREVIEW_WIDTH,
-                          panel_height * 256 / CAMERA_PREVIEW_HEIGHT);
+    uint32_t fit = preview_fit();
     int32_t image_width = CAMERA_PREVIEW_WIDTH * fit / 256;
     int32_t image_height = CAMERA_PREVIEW_HEIGHT * fit / 256;
     int32_t frame_side = LV_MIN(panel_width, panel_height) * 2 / 3;
@@ -131,7 +132,7 @@ static void set_zoom(unsigned zoom)
 void camera_close(void)
 {
     if (camera.phase == CLOSED) return;
-    if (torch_enabled() && !torch_set(false)) perror("turn off camera light");
+    if (!torch_set(false)) perror("turn off camera light");
     if (camera.phase == INSTALLING) {
         camera_driver_ui_cancel();
     }
@@ -143,12 +144,17 @@ void camera_close(void)
 
 static void deleted(lv_event_t *event)
 {
-    (void)event;
     camera_close();
     lv_image_cache_drop(&camera.frame);
     if (camera.panel) lv_obj_delete(camera.panel);
     camera.panel = NULL;
     camera.root = NULL;
+}
+
+static void show_scan_frame(bool on)
+{
+    lv_obj_set_hidden(camera.scan_frame, !on);
+    for (int i = 0; i < 4; i++) lv_obj_set_hidden(camera.scan_shade[i], !on);
 }
 
 static void layout_scan_frame(void)
@@ -172,7 +178,6 @@ static void layout_scan_frame(void)
 
 static void resize_scan_frame(lv_event_t *event)
 {
-    (void)event;
     fit_preview();
     layout_scan_frame();
     update_scan_region();
@@ -292,8 +297,7 @@ static void open_camera(void (*on_code)(const char *activation))
     camera.scan_mode = on_code != NULL;
     camera.torch_checked = false;
     camera.torch_available = false;
-    lv_obj_set_hidden(camera.scan_frame, on_code == NULL);
-    for (int i = 0; i < 4; i++) lv_obj_set_hidden(camera.scan_shade[i], on_code == NULL);
+    show_scan_frame(on_code != NULL);
     lv_obj_set_hidden(camera.panel, false);
     lv_obj_move_foreground(camera.panel);
     lv_obj_update_layout(camera.panel);
@@ -341,11 +345,10 @@ bool camera_key(const struct key_event *key)
     }
     if (key->kind == KEY_KIND_LEFT || key->kind == KEY_KIND_RIGHT) {
         if (camera.phase == CAPTURING && !camera.on_code && key->down && !key->repeat) {
-            if (torch_enabled() && !torch_set(false)) perror("turn off camera light");
+            if (!torch_set(false)) perror("turn off camera light");
             camera.scan_mode = !camera.scan_mode;
             camera.last_qr[0] = 0;
-            lv_obj_set_hidden(camera.scan_frame, !camera.scan_mode);
-            for (int i = 0; i < 4; i++) lv_obj_set_hidden(camera.scan_shade[i], !camera.scan_mode);
+            show_scan_frame(camera.scan_mode);
             camera_capture_start(camera.scan_mode);
             set_zoom(camera.zoom);
         }

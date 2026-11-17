@@ -250,8 +250,6 @@ static bool key(const struct key_event *k)
         }
         return k->kind == KEY_KIND_LEFT || k->kind == KEY_KIND_RIGHT;
     }
-    if (camera_scanning())
-        return camera_key(k);
     if (!lv_obj_is_hidden(camera))
         return camera_key(k);
     if (!lv_obj_is_hidden(toolkit))

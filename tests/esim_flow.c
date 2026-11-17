@@ -16,6 +16,7 @@ bool camera_supported(void) { return supported; }
 void camera_scan(void (*callback)(const char *)) { scanning = true; scan_callback = callback; }
 bool camera_scanning(void) { return scanning; }
 void camera_close(void) { scanning = false; }
+bool camera_key(const struct key_event *key) { return key->kind != KEY_KIND_BACK; }
 static char command[128];
 static char installation[512];
 static char interface_option[16], backend_option[16], configured_backend[16];

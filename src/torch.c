@@ -1,9 +1,9 @@
 #include "torch.h"
+#include "camera_driver.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
-#include <sys/syscall.h>
 #include <unistd.h>
 
 #define TORCH_BRIGHTNESS "/sys/class/leds/aw3641:white:torch/brightness"
@@ -17,14 +17,9 @@ void torch_on_change(void (*changed)(bool enabled))
 
 bool torch_supported(void)
 {
-    char profile[64];
-    FILE *f = fopen("/etc/e5/device-profile", "r");
-    if (!f) return false;
-    bool read = fgets(profile, sizeof profile, f) != NULL;
-    fclose(f);
-    if (!read) return false;
-    profile[strcspn(profile, "\r\n")] = 0;
-    return !strcmp(profile, "e5");
+    char device[64];
+    camera_driver_device(device, sizeof device);
+    return !strcmp(device, "e5");
 }
 
 bool torch_available(void)
@@ -48,14 +43,7 @@ bool torch_set(bool enabled)
         return result == 0;
     }
     if (!torch_supported()) { errno = ENODEV; return false; }
-    if (access("/sys/module/sprd_flash_drv", F_OK)) {
-        int module = open("/usr/libexec/e5-infoscreen/camera/sprd_flash_drv.ko", O_RDONLY | O_CLOEXEC);
-        if (module < 0) return false;
-        int result = syscall(SYS_finit_module, module, "", 0);
-        int error = errno;
-        close(module);
-        if (result < 0 && error != EEXIST) { errno = error; return false; }
-    }
+    if (camera_driver_load("sprd_flash_drv") < 0) return false;
     int fd = open("/dev/sprd_flash", O_RDWR | O_CLOEXEC);
     if (fd < 0) return false;
     FILE *f = fopen(TORCH_BRIGHTNESS, "w");

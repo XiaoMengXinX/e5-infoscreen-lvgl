@@ -21,15 +21,15 @@ int main(int argc, char **argv)
     assert(fread(image, 1, (size_t)w * h, input) == (size_t)w * h);
     fclose(input);
     quirc_end(decoder);
-    char activation[4096] = "unchanged";
-    enum camera_qr_result result = camera_qr_decode(decoder, activation, sizeof activation);
+    char activation[4096] = "unchanged", payload[256] = "";
+    enum camera_qr_result result = camera_qr_decode(decoder, activation, sizeof activation, payload, sizeof payload);
     if (!strcmp(argv[2], "other")) {
         assert(result == CAMERA_QR_OTHER && !strcmp(activation, "unchanged"));
     } else if (!strcmp(argv[2], "none")) {
-        assert(result == CAMERA_QR_NONE && !strcmp(activation, "unchanged"));
+        assert(result == CAMERA_QR_NONE && !strcmp(activation, "unchanged") && !*payload);
     } else {
-        assert(result == CAMERA_QR_ACTIVATION && !strcmp(activation, argv[2]));
-        assert(camera_qr_decode(decoder, activation, 6) == CAMERA_QR_OTHER);
+        assert(result == CAMERA_QR_ACTIVATION && !strcmp(activation, argv[2]) && !strcmp(payload, argv[2]));
+        assert(camera_qr_decode(decoder, activation, 6, payload, sizeof payload) == CAMERA_QR_OTHER);
     }
     quirc_destroy(decoder);
     return 0;

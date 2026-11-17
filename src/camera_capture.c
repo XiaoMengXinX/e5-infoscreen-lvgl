@@ -19,6 +19,7 @@
 #include <jpeglib.h>
 #include "quirc.h"
 #include "camera_qr.h"
+#include "camera_driver.h"
 #define __user
 #include "camera_vendor/sprd_camsys.h"
 #define sensor_prepare sensor_prepare_gc05a2
@@ -45,7 +46,7 @@ static struct {
     struct timespec progress;
 } capture = {.lock = PTHREAD_MUTEX_INITIALIZER, .sensor_x_fraction = 10000, .sensor_y_fraction = 10000};
 
-static void interrupt_read(int sig) { (void)sig; }
+static void interrupt_read(int sig) {}
 
 static void failure_locked(const char *what, int error)
 {
@@ -115,16 +116,16 @@ static void white_balance(const uint16_t *raw, unsigned zoom, struct color_proce
     zoom_crop(zoom, &x0, &y0, &width, &height);
     for (int y = y0; y < y0 + height - 2; y += 16)
         for (int x = x0; x < x0 + width - 2; x += 16) {
-        unsigned r = raw[y * WIDTH + x + 1];
-        unsigned g = (raw[y * WIDTH + x] + raw[(y + 1) * WIDTH + x + 1]) / 2;
-        unsigned b = raw[(y + 1) * WIDTH + x];
-        if (r <= 80 || g <= 80 || b <= 80 || r >= 960 || g >= 960 || b >= 960) continue;
-        double high = fmax(r - 64, fmax(g - 64, b - 64));
-        double low = fmin(r - 64, fmin(g - 64, b - 64));
-        if (high > low * 3) continue;
-        sums[0] += r - 64; sums[1] += g - 64; sums[2] += b - 64;
-        samples++;
-    }
+            unsigned r = raw[y * WIDTH + x + 1];
+            unsigned g = (raw[y * WIDTH + x] + raw[(y + 1) * WIDTH + x + 1]) / 2;
+            unsigned b = raw[(y + 1) * WIDTH + x];
+            if (r <= 80 || g <= 80 || b <= 80 || r >= 960 || g >= 960 || b >= 960) continue;
+            double high = fmax(r - 64, fmax(g - 64, b - 64));
+            double low = fmin(r - 64, fmin(g - 64, b - 64));
+            if (high > low * 3) continue;
+            sums[0] += r - 64; sums[1] += g - 64; sums[2] += b - 64;
+            samples++;
+        }
     if (!samples) return;
     double red = sums[1] / sums[0], blue = sums[1] / sums[2];
     if (color->balanced) {
@@ -220,8 +221,8 @@ static void scan_frame(struct quirc *decoder, const uint16_t *raw, unsigned zoom
 {
     int w, h;
     uint8_t *gray = quirc_begin(decoder, &w, &h);
-    int crop_width = WIDTH * 100 / (int)zoom;
-    int crop_height = HEIGHT * 100 / (int)zoom;
+    int crop_x, crop_y, crop_width, crop_height;
+    zoom_crop(zoom, &crop_x, &crop_y, &crop_width, &crop_height);
     int side = (int)((uint64_t)crop_width * sensor_x_fraction / 10000);
     int side_y = (int)((uint64_t)crop_height * sensor_y_fraction / 10000);
     if (side_y < side) side = side_y;
@@ -300,7 +301,6 @@ static bool save_photo(const uint16_t *raw, const struct color_processing *color
 
 static void *session(void *unused)
 {
-    (void)unused;
     int sensor = -1, image = -1, heap = -1, reserved = -1;
     int buffers[BUFFERS] = {-1, -1, -1};
     void *maps[BUFFERS] = {MAP_FAILED, MAP_FAILED, MAP_FAILED};
@@ -320,26 +320,16 @@ static void *session(void *unused)
         }
     }
     for (int i = 0; i < 3; i++) {
-        char path[160];
-        snprintf(path, sizeof path, "/sys/module/%s", modules[i]);
-        if (!access(path, F_OK)) continue;
-        snprintf(path, sizeof path, "/usr/libexec/e5-infoscreen/camera/%s.ko", modules[i]);
-        int fd = open(path, O_RDONLY | O_CLOEXEC);
-        if (fd < 0) { failure("open camera module"); goto out; }
-        int ret = syscall(SYS_finit_module, fd, "", 0);
-        int error = errno;
-        close(fd);
-        errno = error;
-        if (ret < 0) { failure("load camera module"); goto out; }
-        loaded[i] = true;
+        int result = camera_driver_load(modules[i]);
+        if (result < 0) { failure("load camera module"); goto out; }
+        loaded[i] = result > 0;
     }
     if (stopping()) goto out;
     sensor = open("/dev/sprd_sensor", O_RDWR | O_CLOEXEC);
     if (sensor < 0) { failure("open sensor"); goto out; }
-    char profile[64] = {0};
-    FILE *profile_file = fopen("/etc/e5/device-profile", "r");
-    if (profile_file) { fgets(profile, sizeof profile, profile_file); fclose(profile_file); }
-    bool e5 = !strncmp(profile, "e5", 2);
+    char device[64];
+    camera_driver_device(device, sizeof device);
+    bool e5 = !strcmp(device, "e5");
     if (e5) {
         model = SENSOR_SP5508;
         if (sensor_identify_sp5508(sensor) == 0) {
@@ -448,10 +438,8 @@ static void *session(void *unused)
                 }
             }
             if (frames == 3 || frames % 12 == 0) white_balance(raw, zoom, &color);
-            int crop_width = WIDTH * 100 / (int)zoom;
-            int crop_height = HEIGHT * 100 / (int)zoom;
-            int crop_x = (WIDTH - crop_width) / 2;
-            int crop_y = (HEIGHT - crop_height) / 2;
+            int crop_x, crop_y, crop_width, crop_height;
+            zoom_crop(zoom, &crop_x, &crop_y, &crop_width, &crop_height);
             for (int y = 0; y < CAMERA_PREVIEW_HEIGHT; y++) for (int x = 0; x < CAMERA_PREVIEW_WIDTH; x++) {
                 uint8_t pixel[3];
                 int raw_x = crop_x + y * crop_width / CAMERA_PREVIEW_HEIGHT;

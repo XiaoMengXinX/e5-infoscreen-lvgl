@@ -13,7 +13,9 @@
 #include <unistd.h>
 
 #define DRIVER_DIR "/usr/libexec/e5-infoscreen/camera"
+/* The modules come first. */
 static const char *files[] = {"sprd_sensor.ko", "sprd_flash_drv.ko", "sprd_camera.ko", "build.commit", "kernel.release"};
+#define MODULES 3
 static struct child installer;
 static char stage[256];
 static void (*completed)(bool);
@@ -26,14 +28,18 @@ static void report(const char *line)
     progress_line(line);
 }
 
+void camera_driver_device(char *value, size_t size)
+{
+    value[0] = 0;
+    FILE *f = fopen("/etc/e5/device-profile", "r");
+    if (!f) return;
+    if (fgets(value, size, f)) value[strcspn(value, "\r\n")] = 0;
+    fclose(f);
+}
+
 static bool profile(char *value, size_t size)
 {
-    FILE *f = fopen("/etc/e5/device-profile", "r");
-    if (!f) return false;
-    bool read = fgets(value, size, f) != NULL;
-    fclose(f);
-    if (!read) return false;
-    value[strcspn(value, "\r\n")] = 0;
+    camera_driver_device(value, size);
     return !strcmp(value, "e5") || !strcmp(value, "lym10k") || !strcmp(value, "t512n");
 }
 
@@ -41,6 +47,21 @@ bool camera_driver_supported(void)
 {
     char value[64];
     return profile(value, sizeof value);
+}
+
+int camera_driver_load(const char *module)
+{
+    char path[160];
+    snprintf(path, sizeof path, "/sys/module/%s", module);
+    if (!access(path, F_OK)) return 0;
+    snprintf(path, sizeof path, DRIVER_DIR "/%s.ko", module);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    int result = syscall(SYS_finit_module, fd, "", 0);
+    int error = errno;
+    close(fd);
+    if (result < 0 && error != EEXIST) { errno = error; return -1; }
+    return result == 0;
 }
 
 bool camera_driver_ready(void)
@@ -54,7 +75,7 @@ bool camera_driver_ready(void)
     if (!read || uname(&running)) return false;
     version[strcspn(version, "\r\n")] = 0;
     if (strcmp(version, running.release)) return false;
-    for (size_t i = 0; i < 3; i++) {
+    for (size_t i = 0; i < MODULES; i++) {
         char path[256];
         snprintf(path, sizeof path, DRIVER_DIR "/%s", files[i]);
         if (access(path, R_OK)) return false;

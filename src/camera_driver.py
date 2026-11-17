@@ -102,8 +102,6 @@ def download(url, destination):
 
 
 def install(profile, stage):
-    if profile not in ('e5', 'lym10k', 't512n'):
-        raise ValueError('Unsupported camera profile: ' + profile)
     if any(stage.iterdir()):
         raise ValueError('Camera staging directory must be empty')
     release = os.uname().release
