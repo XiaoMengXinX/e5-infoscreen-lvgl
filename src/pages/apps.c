@@ -1,8 +1,6 @@
 #include "app.h"
 #include "clash.h"
 #include "camera.h"
-#include "camera_driver.h"
-#include "camera_driver_ui.h"
 #include "esim.h"
 #include "input.h"
 #include "icons.h"
@@ -16,7 +14,6 @@
 
 static lv_obj_t *list, *speed, *toolkit, *toolkit_row, *esim, *clash, *camera, *flashlight;
 static lv_obj_t *light_status, *light_button, *light_icon;
-static bool light_installing;
 /* The row the keys were on when an app opened over the list. */
 static lv_obj_t *list_focus;
 
@@ -33,10 +30,6 @@ static void show(lv_obj_t *view)
     }
     if (view != camera)
         camera_close();
-    if (view != flashlight && light_installing) {
-        camera_driver_ui_cancel();
-        light_installing = false;
-    }
     if (view != speed)
         speedtest_stop();
     if (view != toolkit)
@@ -102,13 +95,18 @@ static void light_refresh(void)
     lv_obj_set_style_outline_color(light_button, color, LV_STATE_FOCUS_KEY);
 }
 
+void apps_refresh_torch(void)
+{
+    if (!lv_obj_is_hidden(flashlight)) light_refresh();
+}
+
 void apps_toggle_torch(void)
 {
     if (!torch_set(!torch_enabled())) {
         dialog_open(L("手电筒操作失败", "Flashlight failed"), strerror(errno));
         dialog_cancel();
     }
-    if (!lv_obj_is_hidden(flashlight)) light_refresh();
+    apps_refresh_torch();
 }
 
 static void light_toggle(lv_event_t *event)
@@ -124,21 +122,11 @@ static void light_layout(lv_event_t *event)
     lv_obj_set_size(light_icon, size * 64 / 148, size * 64 / 148);
 }
 
-static void light_installed(bool success)
-{
-    light_installing = false;
-    if (!success) show(list);
-}
-
 static void on_flashlight(lv_event_t *event)
 {
     show(flashlight);
-    light_refresh();
+    apps_refresh_torch();
     ui_focus_key(light_button);
-    if (!camera_driver_ready()) {
-        light_installing = true;
-        camera_driver_ui_open(light_installed);
-    }
 }
 
 static void create(lv_obj_t *page)
@@ -245,7 +233,7 @@ static bool key(const struct key_event *k)
 {
     if (!lv_obj_is_hidden(flashlight)) {
         if (k->kind == KEY_KIND_OK) {
-            if (k->down && !k->repeat && !light_installing) light_toggle(NULL);
+            if (k->down && !k->repeat) light_toggle(NULL);
             return true;
         }
         return k->kind == KEY_KIND_LEFT || k->kind == KEY_KIND_RIGHT;

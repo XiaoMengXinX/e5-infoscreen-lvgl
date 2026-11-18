@@ -25,7 +25,7 @@ commands.append(shlex.join(qr))
 for fixture, result in [('esim-qr', 'LPA:1$test.example$camera-scan-test'), ('other-qr', 'other'),
                         ('invalid-esim-qr', 'other'), ('blank-qr', 'none')]:
     commands.append(shlex.join(['/out/tests/camera_qr', '/src/tests/fixtures/' + fixture + '.pgm', result]))
-for name, sources in [('volkeys', ['/src/tests/volkeys.c']), ('drm', ['/src/tests/drm.c']), ('motion', ['/src/tests/motion.c', '/src/src/ui.c']),
+for name, sources in [('torch', ['/src/tests/torch.c']), ('volkeys', ['/src/tests/volkeys.c']), ('drm', ['/src/tests/drm.c']), ('motion', ['/src/tests/motion.c', '/src/src/ui.c']),
                       ('lpac', ['/src/tests/lpac.c']), ('esim_text', ['/src/tests/esim_text.c']),
                       ('esim_flow', ['/src/tests/esim_flow.c', '/src/src/ui.c', '/src/src/dialog.c']),
                       ('install', ['/src/tests/install.c', '/src/src/ui.c', '/src/src/dialog.c'])]:

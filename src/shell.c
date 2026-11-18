@@ -1184,6 +1184,7 @@ static void status_done(int status, cJSON *st, void *ctx)
 
 static void poll_fire(lv_timer_t *t)
 {
+    torch_sync();
     if (poll_busy) {
         poll_again = true;
         return;
@@ -1808,6 +1809,7 @@ static lv_obj_t *tool_button(lv_obj_t *parent, const char *icon, int width, lv_e
 static void torch_changed(bool enabled)
 {
     lv_obj_set_hidden(ui.bar_torch, !enabled);
+    apps_refresh_torch();
 }
 
 static void build_bar(void)
@@ -1842,7 +1844,7 @@ static void build_bar(void)
     lv_obj_set_style_text_color(ui.bar_sms, theme.accent, 0);
     ui.bar_torch = icon_create(ui.bar, "flashlight", 13);
     lv_obj_set_style_text_color(ui.bar_torch, theme.fair, 0);
-    torch_changed(torch_enabled());
+    lv_obj_set_hidden(ui.bar_torch, !torch_enabled());
     ui.bar_bars = bars_create(ui.bar, 15, 11);
     lv_obj_t *dual = lv_obj_create(ui.bar);
     lv_obj_remove_style_all(dual);

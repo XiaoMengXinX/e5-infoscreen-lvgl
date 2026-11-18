@@ -165,6 +165,7 @@ void phone_calls(cJSON *event);
 /* pages/apps.c */
 void apps_open_toolkit(void);
 void apps_toggle_torch(void);
+void apps_refresh_torch(void);
 
 /* pages/settings.c */
 void settings_reset(void);
