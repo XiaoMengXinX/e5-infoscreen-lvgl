@@ -85,7 +85,7 @@ static const struct {
     {"lte_bands", "signal"}, {"nr_bands", "signal"}, {"cell_lock", "lock"}, {"bands_default", "refresh"},
     {"reconnect", "refresh"}, {"modem_restart", "refresh"}, {"start", "battery"}, {"stop", "battery"}, {"full_once", "battery"},
     {"state", "info"}, {"timezone", "globe"}, {"clock_seconds", "clock"}, {"version", "info"}, {"built", "clock"},
-    {"screen_version", "info"}, {"update_check", "refresh"}, {"update_apply", "download"},
+    {"update_check", "refresh"},
     {"update_rollback", "refresh"}, {"update_auto", "refresh"}, {"build_time", "clock"}, {"build_commit", "info"},
     {"traffic_clear", "trash"}, {"clear_0", "trash"}, {"clear_1", "trash"},
     {"clear_all", "trash"}, {"next_boot", "power"}, {"default_boot", "power"}, {"reboot", "refresh"}, {"ui_restart", "refresh"}, {"ui_webkit", "globe"}, {"touch_reset", "touch"},
@@ -527,6 +527,12 @@ static void add_local_items(cJSON *items, const char *cat)
         cJSON_AddBoolToObject(cache, "confirm", true);
         cJSON_AddItemToArray(items, cache);
     } else if (!strcmp(cat, "system")) {
+        for (int i = cJSON_GetArraySize(items) - 1; i >= 0; i--) {
+            const cJSON *it = cJSON_GetArrayItem(items, i);
+            if (jstr_is(it, "id", "screen_version") || jstr_is(it, "id", "update_check") ||
+                jstr_is(it, "id", "update_apply") || jstr_is(it, "id", "update_rollback"))
+                cJSON_DeleteItemFromArray(items, i);
+        }
         cJSON *camera = local_item("local:camera", "category", "相机", "Camera", "", "");
         cJSON_InsertItemInArray(items, item_index(items, "reboot"), camera);
         cJSON *restart = local_item("ui_restart", "action", "重启界面", "Restart the screen",
