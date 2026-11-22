@@ -23,16 +23,15 @@ class DriverTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.stage = Path(temporary.name)
         self.payloads = {name: (name + ' contents').encode() for name in driver['MODULES']}
-        self.config = 'CONFIG_Z=y\nCONFIG_A="hello"\n'
         self.build = dict(profile='lym10k', kernel_release='6.12-test', driver_commit='a' * 40,
                           asset='sprd-camera-lym10k-6.12-test-arm64.tar.gz', sha256='0' * 64,
-                          config_sha256=sha(b'CONFIG_A="hello"\nCONFIG_Z=y\n'),
+                          config_sha256='1' * 64,
                           modules={name: sha(data) for name, data in self.payloads.items()})
 
     def select(self, manifest=None, **changes):
         build = dict(self.build, **changes)
         return driver['select_build'](manifest or {'schema': 1, 'builds': [build]},
-                                      'lym10k', '6.12-test', self.build['config_sha256'])
+                                      'lym10k', '6.12-test')
 
     def archive(self, entries=None):
         path = self.stage / 'driver.tar.gz'
@@ -49,21 +48,21 @@ class DriverTests(unittest.TestCase):
         self.build['sha256'] = sha(path.read_bytes())
         return path
 
-    def test_normalized_config_matches_publisher(self):
-        noise = '# CONFIG_DISABLED is not set\nCONFIG_BAD-NAME=y\n CONFIG_SPACE=y\n'
-        noise += ''.join(name + '=123\n' for name in driver['TOOLCHAIN_METADATA'])
-        self.assertEqual(driver['config_sha256'](noise + self.config), self.build['config_sha256'])
-        self.assertNotEqual(driver['config_sha256'](self.config + 'CONFIG_ZZ=m\n'), self.build['config_sha256'])
+    def test_config_hash_is_build_metadata(self):
+        for digest in ('1' * 64, '2' * 64):
+            with self.subTest(digest=digest):
+                self.assertEqual(self.select(config_sha256=digest),
+                                 dict(self.build, config_sha256=digest))
 
     def test_exact_metadata_match(self):
         self.assertEqual(self.select(), self.build)
         other = dict(self.build, profile='t512n')
         manifest = {'schema': 1, 'builds': [other, self.build]}
         self.assertEqual(self.select(manifest), self.build)
-        self.assertEqual(driver['select_build'](manifest, 't512n', '6.12-test', other['config_sha256']), other)
+        self.assertEqual(driver['select_build'](manifest, 't512n', '6.12-test'), other)
         for field, value in [('profile', 'LYM10K'), ('kernel_release', '6.12'),
                              ('driver_commit', None), ('driver_commit', 'bad'),
-                             ('config_sha256', '1' * 64), ('asset', '../bad.tar.gz'),
+                             ('asset', '../bad.tar.gz'),
                              ('asset', 'https://other/driver.tar.gz'), ('sha256', 'oops'),
                              ('modules', {}), ('modules', dict(self.build['modules'], extra='0' * 64))]:
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
@@ -73,8 +72,7 @@ class DriverTests(unittest.TestCase):
         e5 = dict(self.build, profile='e5', kernel_release='6.18.54-e5-mobile4',
                   asset='sprd-camera-e5-6.18.54-e5-mobile4-arm64.tar.gz')
         manifest = {'schema': 1, 'builds': [self.build, e5]}
-        self.assertEqual(driver['select_build'](manifest, 'e5', e5['kernel_release'],
-                                                e5['config_sha256']), e5)
+        self.assertEqual(driver['select_build'](manifest, 'e5', e5['kernel_release']), e5)
 
     def test_manifest_schema_shape_and_ambiguity(self):
         for manifest in ({'schema': 2, 'builds': []}, {'schema': True, 'builds': []},
@@ -83,7 +81,7 @@ class DriverTests(unittest.TestCase):
             with self.subTest(manifest=manifest), self.assertRaises(ValueError):
                 self.select(manifest)
         with self.assertRaisesRegex(ValueError, 'Unsupported camera profile'):
-            driver['select_build']({}, 'lym10k-extra', '', '')
+            driver['select_build']({}, 'lym10k-extra', '')
 
     def test_archive_hash_precedes_extraction(self):
         path = self.archive()
@@ -133,12 +131,7 @@ class DriverTests(unittest.TestCase):
             if failure == destination.name:
                 raise RuntimeError('download interrupted')
 
-        def read_config(*args):
-            self.assertEqual(args, ('/proc/config.gz', 'rt'))
-            return io.StringIO(self.config)
-
         with patch.dict(driver['install'].__globals__, download=download), \
-                patch.object(driver['gzip'], 'open', side_effect=read_config), \
                 patch.object(driver['os'], 'uname', return_value=Mock(release='6.12-test')):
             if module_mismatch:
                 with self.assertRaisesRegex(ValueError, 'module checksum mismatch: sprd_camera.ko'):

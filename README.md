@@ -180,7 +180,7 @@ Clash 核心按命令行的 `-d`、`-f` 找到配置，读取顶层的 `external
 
 应用 → 相机在lym10k和t512n上使用GC05A2，在E5上先识别SP5508，再尝试GC5035候选。按OK键，将1944×2592的JPEG照片保存到`/tmp/camera.jpg`，再次拍照覆盖上一张。预览和照片统一向右旋转90度，取景画面在可用区域内保持3:4比例完整显示，画面底部显示「按OK键拍照」；GC05A2和SP5508的曝光与sensor增益根据RAW亮度自动调整，GC5035沿用模式表中的固定曝光。保存成功提示显示2秒后自动隐藏。返回时界面立即关闭取景，后台停止采集、释放buffer并卸载由应用加载的模块；清理期间再次打开会等旧会话完成后启动。
 
-相机和eSIM扫码入口仅在`/etc/e5/device-profile`为`e5`、`lym10k`或`t512n`时显示。首次打开时，如果本机没有匹配运行内核的模块，应用会提示安装；确认后从[e5-linux-camera的modules Release](https://github.com/XiaoMengXinX/e5-linux-camera/releases/tag/modules)下载安装`sprd_sensor.ko`、`sprd_flash_drv.ko`和`sprd_camera.ko`。安装会核对设备、内核版本、内核配置以及包和模块的SHA256；没有匹配构建时显示具体错误，返回键可取消下载。设置 → 系统 → 相机可查看驱动状态和构建哈希，并安装、重新安装或卸载驱动。
+相机和eSIM扫码入口仅在`/etc/e5/device-profile`为`e5`、`lym10k`或`t512n`时显示。首次打开时，如果本机没有匹配运行内核的模块，应用会提示安装；确认后从[e5-linux-camera的modules Release](https://github.com/XiaoMengXinX/e5-linux-camera/releases/tag/modules)下载安装`sprd_sensor.ko`、`sprd_flash_drv.ko`和`sprd_camera.ko`。安装会核对设备、内核版本以及包和模块的SHA256，模块加载时由内核检查兼容性；没有匹配构建时显示具体错误，返回键可取消下载。设置 → 系统 → 相机可查看驱动状态和构建哈希，并安装、重新安装或卸载驱动。
 
 模块安装在`/usr/libexec/e5-infoscreen/camera/`，`kernel.release`记录对应的内核版本。下载安装在后台执行，完成后直接进入取景；模块按相机会话加载、卸载。构建Release只提供外部模块，设备继续运行现有内核。
 

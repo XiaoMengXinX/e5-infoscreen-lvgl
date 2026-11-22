@@ -1,6 +1,5 @@
 #!/usr/bin/python3
 """Stage camera modules matching the running kernel for the UI to install."""
-import gzip
 import hashlib
 import json
 import os
@@ -13,21 +12,9 @@ import tarfile
 
 MANIFEST_URL = 'https://github.com/XiaoMengXinX/e5-linux-camera/releases/download/modules/manifest.json'
 MODULES = ('sprd_sensor.ko', 'sprd_flash_drv.ko', 'sprd_camera.ko')
-TOOLCHAIN_METADATA = {
-    'CONFIG_CC_VERSION_TEXT', 'CONFIG_CLANG_VERSION', 'CONFIG_LLD_VERSION',
-    'CONFIG_GCC_VERSION', 'CONFIG_AS_VERSION', 'CONFIG_LD_VERSION',
-    'CONFIG_PAHOLE_VERSION',
-}
 
 
-def config_sha256(text):
-    lines = sorted(line for line in text.splitlines()
-                   if re.fullmatch(r'CONFIG_[A-Za-z0-9_]+=.*', line)
-                   and line.split('=', 1)[0] not in TOOLCHAIN_METADATA)
-    return hashlib.sha256(('\n'.join(lines) + '\n').encode()).hexdigest()
-
-
-def select_build(manifest, profile, release, config_hash):
+def select_build(manifest, profile, release):
     if profile not in ('e5', 'lym10k', 't512n'):
         raise ValueError('Unsupported camera profile: ' + profile)
     if not isinstance(manifest, dict) or type(manifest.get('schema')) is not int or manifest['schema'] != 1:
@@ -42,8 +29,6 @@ def select_build(manifest, profile, release, config_hash):
     build = matches[0]
     if not isinstance(build.get('driver_commit'), str) or not re.fullmatch(r'[0-9a-f]{40}', build['driver_commit']):
         raise ValueError('Invalid camera driver commit')
-    if build.get('config_sha256') != config_hash:
-        raise ValueError('Camera build kernel config checksum mismatch')
     asset = build.get('asset')
     if not isinstance(asset, str) or not re.fullmatch(r'[A-Za-z0-9_+.-]+\.tar\.gz', asset):
         raise ValueError('Invalid camera archive asset name')
@@ -105,14 +90,12 @@ def install(profile, stage):
     if any(stage.iterdir()):
         raise ValueError('Camera staging directory must be empty')
     release = os.uname().release
-    with gzip.open('/proc/config.gz', 'rt') as source:
-        config_hash = config_sha256(source.read())
     manifest = stage / 'manifest.json'
     archive = stage / 'driver.tar.gz'
     try:
         print('@check', flush=True)
         download(MANIFEST_URL, manifest)
-        build = select_build(json.loads(manifest.read_text()), profile, release, config_hash)
+        build = select_build(json.loads(manifest.read_text()), profile, release)
         manifest.unlink()
         print('@download', flush=True)
         download(MANIFEST_URL.rsplit('/', 1)[0] + '/' + build['asset'], archive)

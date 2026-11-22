@@ -22,4 +22,4 @@ The volume-key test covers the original plugin configuration, defaults, cached r
 
 QR fixtures cover a valid eSIM activation payload, an ordinary URL, a missing matching ID, an undersized destination, and a blank frame. The eSIM flow test checks scan cancellation, activation-code fill without starting a download, confirmation-code preservation, and closing the scanner when leaving the app.
 
-`python3 tests/camera_driver.py` checks release selection by device, kernel and config, archive and module checksums, regular-file archive contents, download tool selection and failed staging cleanup. The eSIM flow test also checks that unsupported devices hide the scan entry.
+`python3 tests/camera_driver.py` checks release selection by device and kernel, build config metadata handling, archive and module checksums, regular-file archive contents, download tool selection and failed staging cleanup. The eSIM flow test also checks that unsupported devices hide the scan entry.
