@@ -23,6 +23,7 @@
 
 #define DEPTH 8
 #define ROWS 96
+#define NETWORK_WAIT_MS 30000
 
 enum kind {
     V_MENU, V_CAT, V_EDIT, V_AT, V_ATRES, V_DEVICES, V_DEVICE,
@@ -40,6 +41,8 @@ struct view {
     char text[512];
     char *reply;
     bool warn, saving, loading, has_password;
+    enum { NETWORK_IDLE, NETWORK_WAITING, NETWORK_TIMED_OUT } network_state;
+    uint32_t network_started;
     int slot;
     int32_t scroll;
     char focus[96];
@@ -731,14 +734,30 @@ static void data_loaded(int status, cJSON *r, void *ctx)
     if (!v)
         return;
     v->loading = false;
+    int previous_network_state = v->network_state;
     if (ok) {
         const char *field = v->kind == V_CAT ? "items" : v->kind == V_AT ? "presets" : v->kind == V_DEVICES ? "devices" : NULL;
-        cJSON_Delete(v->data);
+        cJSON *previous = v->data;
         v->data = cJSON_Duplicate(field ? jget(r, field) : r, true);
         if (field && !v->data)
             v->data = cJSON_CreateArray();
         if (v->kind == V_CAT)
             add_local_items(v->data, v->cat);
+        if (v->kind == V_CAT && !strcmp(v->cat, "network")) {
+            if (!jtrue(item(v, "lock_state"), "pending"))
+                v->network_state = NETWORK_IDLE;
+            else if (v->network_state == NETWORK_IDLE) {
+                v->network_started = lv_tick_get();
+                v->network_state = NETWORK_WAITING;
+            }
+        }
+        bool unchanged = previous_network_state == NETWORK_WAITING && v->network_state == NETWORK_WAITING &&
+                         cJSON_Compare(previous, v->data, true);
+        cJSON_Delete(previous);
+        if (unchanged)
+            return;
+    } else {
+        v->network_state = NETWORK_IDLE;
     }
     if (v != top())
         return;
@@ -760,6 +779,7 @@ static void load(struct view *v, const char *path)
 
 static void load_cat(struct view *v)
 {
+    v->network_state = NETWORK_IDLE;
     if (!strcmp(v->cat, STK_CATEGORY) || !strcmp(v->cat, "volkeys") || !strcmp(v->cat, "local:camera")) {
         cJSON_Delete(v->data);
         v->data = cJSON_CreateArray();
@@ -1023,7 +1043,12 @@ static void render_cat(struct view *v)
             !strcmp(type, "category"))
             flags |= ROW_CHEVRON;
         row(key, icon, label, value, flags);
-        note(jget(it, "note"));
+        if (!strcmp(id, "lock_state") && v->network_state == NETWORK_WAITING)
+            ui_note(body, L("正在读取网络设置…", "Reading network settings…"));
+        else if (!strcmp(id, "lock_state") && v->network_state == NETWORK_TIMED_OUT)
+            ui_note(body, L("读取超时，请刷新锁定状态", "Read timed out. Refresh lock state to retry."));
+        else
+            note(jget(it, "note"));
     }
 }
 
@@ -1957,6 +1982,8 @@ static void clicked(const char *key)
     struct view *v = top();
     if (!v || v->saving || (depth >= 2 && stack[depth - 2].saving))
         return;
+    if (v->kind == V_CAT && !strcmp(v->cat, "network") && v->loading)
+        return;
     if (v->kind == V_APN || v->kind == V_APNEDIT) {
         apn_clicked(v, key);
         return;
@@ -2124,6 +2151,16 @@ static void reset(void)
 static void status(const cJSON *st)
 {
     apn_status(st);
+    struct view *v = top();
+    if (!v || v->network_state != NETWORK_WAITING || v->kind != V_CAT ||
+        app.page != PAGE_SETTINGS || app.blank || lock_active() || v->saving)
+        return;
+    if (lv_tick_elaps(v->network_started) >= NETWORK_WAIT_MS) {
+        v->network_state = NETWORK_TIMED_OUT;
+        render();
+    } else if (!v->loading && !*armed) {
+        load(v, "/settings/network");
+    }
 }
 
 const struct page_ops settings_page = {
