@@ -882,7 +882,7 @@ static void post_finish(struct post *p, const cJSON *r)
             i++;
         }
     }
-    if (ok && v && jtrue(item, "reload"))
+    if (ok && v && (jtrue(item, "reload") || !strcmp(p->id, "lock_refresh")))
         load_cat(v);
     if (ok && v && !strcmp(v->cat, "usb") &&
         (!strcmp(p->id, "reset") || !strcmp(p->id, "usb_role") || !strcmp(p->id, "usb_host_boot")))
@@ -893,7 +893,7 @@ static void post_finish(struct post *p, const cJSON *r)
     struct view *t = top();
     if (ok && t && t->kind == V_EDIT && t != v && find(p->serial) == &stack[depth - 2])
         pop();
-    else if (ok && v && v->kind == V_CAT && t == v && jstr(item, "type") == NULL)
+    else if (ok && v && v->kind == V_CAT && t == v && !v->loading && jstr(item, "type") == NULL)
         load_cat(v);
     cJSON_Delete(p->value);
     free(p);
